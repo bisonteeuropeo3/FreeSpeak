@@ -236,6 +236,13 @@ fn has_api_key(text: &str) -> bool {
 /// Deliberately one-shot, marked with a file: without the marker, blanking the
 /// key on purpose would silently bring the old one back on the next start.
 pub fn migrate_legacy_data() -> Option<PathBuf> {
+    // An explicit data directory means the user has already said where their
+    // files live. Going and copying the old ones in anyway would surprise them -
+    // and it quietly undid the isolation that `FREESPEAK_DATA_DIR` is for.
+    if data_dir_override().is_some() {
+        return None;
+    }
+
     let new = data_dir();
     let old = legacy_data_dir();
     if new == old || new.join(MIGRATED).exists() {
@@ -273,17 +280,22 @@ pub fn migrate_legacy_data() -> Option<PathBuf> {
     Some(old)
 }
 
-pub fn data_dir() -> PathBuf {
-    // The pre-rename variable is still honoured: changing the name should not
-    // move anyone's files out from under them.
+/// An explicitly configured data directory, if there is one. Both the current
+/// and the pre-rename variable are honoured: changing a name should not move
+/// anyone's files out from under them.
+fn data_dir_override() -> Option<PathBuf> {
     for name in ["FREESPEAK_DATA_DIR", "VOICE_NOT_DATA_DIR"] {
         if let Ok(dir) = std::env::var(name) {
             if !dir.trim().is_empty() {
-                return PathBuf::from(dir);
+                return Some(PathBuf::from(dir));
             }
         }
     }
-    default_data_dir()
+    None
+}
+
+pub fn data_dir() -> PathBuf {
+    data_dir_override().unwrap_or_else(default_data_dir)
 }
 
 pub fn config_path() -> PathBuf {

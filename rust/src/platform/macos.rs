@@ -544,10 +544,18 @@ fn osascript_field(reply: &str, field: &str) -> Option<String> {
 
 /// Shows the settings and waits for them, `Ok(None)` when cancelled.
 pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, String> {
+    // An empty key is the one thing that stops this app working at all, so say
+    // what to do about it rather than showing an empty box.
+    let question = if current.api_key.trim().is_empty() {
+        "FreeSpeak needs your API key before it can transcribe anything. Paste it here."
+    } else {
+        "The API key FreeSpeak uses to transcribe."
+    };
     let key_script = format!(
-        "display dialog \"The API key FreeSpeak uses to transcribe.\" \
+        "display dialog {} \
          with title \"FreeSpeak settings\" default answer {} \
          buttons {{\"Cancel\", \"Next\"}} default button \"Next\" with hidden answer",
+        applescript_string(question),
         applescript_string(&current.api_key)
     );
     let reply = match run_osascript(&key_script)? {
@@ -573,6 +581,16 @@ pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, S
         .unwrap_or(current.beep);
 
     Ok(Some(SettingsInput { api_key, beep }))
+}
+
+/// Whether a settings dialog is already on screen.
+///
+/// Always false on macOS: these are `osascript` dialogs owned by another
+/// process, so there is nothing here to look for. The window they stand in for
+/// is modal and short-lived, so a duplicate is a brief annoyance rather than the
+/// stacked windows it would be on Windows.
+pub fn settings_window_open() -> bool {
+    false
 }
 
 // ----------------------------------------------------------- single instance

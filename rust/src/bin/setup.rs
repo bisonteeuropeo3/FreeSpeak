@@ -90,9 +90,29 @@ mod installer {
         PathBuf::from(base).join("Programs").join("freespeak")
     }
 
-    fn config_path() -> PathBuf {
+    /// Where the app keeps its config. The data-directory variables are honoured
+    /// here too: the installer has to agree with the app about where the key
+    /// lives, or it would ask for a key that is already set.
+    fn data_dir() -> PathBuf {
+        for name in ["FREESPEAK_DATA_DIR", "VOICE_NOT_DATA_DIR"] {
+            if let Ok(dir) = std::env::var(name) {
+                if !dir.trim().is_empty() {
+                    return PathBuf::from(dir);
+                }
+            }
+        }
         let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base).join("freespeak").join("config")
+        PathBuf::from(base).join("freespeak")
+    }
+
+    fn data_dir_is_forced() -> bool {
+        ["FREESPEAK_DATA_DIR", "VOICE_NOT_DATA_DIR"]
+            .iter()
+            .any(|name| std::env::var(name).map(|v| !v.trim().is_empty()).unwrap_or(false))
+    }
+
+    fn config_path() -> PathBuf {
+        data_dir().join("config")
     }
 
     /// The config file of the pre-rename app, if it is still there. The app moves
@@ -158,6 +178,9 @@ mod installer {
         }
         [config_path(), previous_config_path()]
             .iter()
+            // A forced data directory means the old one is not this install's
+            // business: the app will not migrate it either.
+            .take(if data_dir_is_forced() { 1 } else { 2 })
             .any(|path| {
                 std::fs::read_to_string(path)
                     .map(|text| {
@@ -181,7 +204,19 @@ mod installer {
         value.encode_utf16().chain(std::iter::once(0)).collect()
     }
 
+    /// `FREESPEAK_NO_DIALOG=1` (or the pre-rename name) answers every dialog for
+    /// the user: yes/no questions become "no", notices are skipped. That is what
+    /// makes an interactive install testable from a script.
+    fn dialogs_suppressed() -> bool {
+        ["FREESPEAK_NO_DIALOG", "VOICE_NOT_NO_DIALOG"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some())
+    }
+
     fn ask(title: &str, text: &str) -> bool {
+        if dialogs_suppressed() {
+            return false;
+        }
         let title = wide(title);
         let text = wide(text);
         let answer = unsafe {
@@ -196,6 +231,10 @@ mod installer {
     }
 
     fn info(title: &str, text: &str, error: bool) {
+        if dialogs_suppressed() && !error {
+            println!("{title}: {}", text.replace('\n', " "));
+            return;
+        }
         let title = wide(title);
         let text = wide(text);
         let style = if error {
@@ -307,6 +346,25 @@ mod installer {
         }
     }
 
+    /// Starts the app detached from this process.
+    ///
+    /// The stdio handles matter: without this the child inherits the installer's
+    /// output, and anything that runs the installer through a pipe (`... | more`,
+    /// a script capturing output, an IDE) then waits for the *child* to exit.
+    /// Measured: a scripted install hung for five minutes on the settings window
+    /// it had just opened.
+    fn launch_detached(target: &Path, arguments: &[&str]) -> Result<(), String> {
+        use std::process::Stdio;
+        hidden(Command::new(target))
+            .args(arguments)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("could not start {}: {e}", target.display()))
+    }
+
     /// Puts `payload` in place of the installed app.
     ///
     /// Windows refuses to overwrite a running executable, and terminating it does
@@ -400,27 +458,21 @@ mod installer {
                 APP,
                 "FreeSpeak is installed and will start at login.\n\nStart it now?",
             ) {
-                let _ = Command::new(&target).spawn();
+                let _ = launch_detached(&target, &[]);
             }
-        } else if ask(
-            APP,
-            "FreeSpeak is installed and will start at login.\n\n\
-             It still needs an API key to transcribe.\n\nSet it up now?",
-        ) {
-            // The prompt needs a console, so open one.
-            let _ = Command::new("cmd")
-                .args(["/c", "start", "", &target.display().to_string(), "--set-key"])
-                .spawn();
         } else {
+            // No key means the app cannot transcribe anything, and it used to
+            // refuse to start at all - which looked like a broken install. Open
+            // the settings window instead, so the one thing that is missing can
+            // be filled in right there.
             info(
                 APP,
-                &format!(
-                    "You can add the key whenever you like:\n\n    freespeak --set-key\n\n\
-                     or edit this file:\n{}",
-                    config_path().display()
-                ),
+                "FreeSpeak is installed and will start at login.\n\n\
+                 It needs your API key before it can transcribe anything, so the \
+                 settings window is opening now: paste the key and press Save.",
                 false,
             );
+            let _ = launch_detached(&target, &["--settings"]);
         }
         Ok(())
     }

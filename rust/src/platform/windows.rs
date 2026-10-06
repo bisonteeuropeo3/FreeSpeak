@@ -27,14 +27,15 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOD_WIN as WIN_MOD_WIN, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AdjustWindowRect, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetDlgItem,
-    GetMessageW, GetSystemMetrics, GetWindowTextLengthW, GetWindowTextW, IsDialogMessageW,
-    LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow,
-    ShowWindow, TranslateMessage, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON,
-    CS_HREDRAW, CS_VREDRAW, ES_AUTOHSCROLL, HMENU, IDC_ARROW, MB_ICONERROR, MB_OK, MSG,
-    SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
-    WM_CTLCOLORSTATIC, WM_DESTROY, WM_HOTKEY, WM_SETFONT, WNDCLASSW, WS_CAPTION, WS_CHILD,
-    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    AdjustWindowRect, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    FindWindowW, GetDlgItem, GetMessageW, GetSystemMetrics, GetWindowTextLengthW, GetWindowTextW,
+    IsDialogMessageW, LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW,
+    SetForegroundWindow, ShowWindow, TranslateMessage, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX,
+    BS_DEFPUSHBUTTON, CS_HREDRAW, CS_VREDRAW, ES_AUTOHSCROLL, HMENU, IDC_ARROW, MB_ICONERROR,
+    MB_OK, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
+    WM_COMMAND, WM_CTLCOLORSTATIC, WM_DESTROY, WM_HOTKEY, WM_SETFONT, WNDCLASSW, WS_CAPTION,
+    WS_CHILD, WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP,
+    WS_VISIBLE,
 };
 
 /// UTF-16 with a terminating NUL.
@@ -347,6 +348,11 @@ const ID_SOUND: i32 = 101;
 const ID_SAVE: i32 = 1;
 const ID_CANCEL: i32 = 2;
 
+/// Window class and title, in one place because finding the window again needs
+/// exactly the same pair.
+const SETTINGS_CLASS: &str = "FreeSpeakSettings";
+const SETTINGS_TITLE: &str = "FreeSpeak settings";
+
 /// `EM_SETSEL`: selects a range in an edit control.
 const EM_SETSEL: u32 = 0x00b1;
 
@@ -426,6 +432,23 @@ unsafe extern "system" fn settings_proc(
     }
 }
 
+/// Whether a settings window is already on screen.
+///
+/// Used by the background copy when it starts without an API key: opening a
+/// second window on top of the one the user is already typing into (or the one
+/// the installer just opened) is the kind of duplicate that makes an app feel
+/// broken.
+pub fn settings_window_open() -> bool {
+    let class = wide_z(SETTINGS_CLASS);
+    let title = wide_z(SETTINGS_TITLE);
+    unsafe {
+        // FindWindowW returns an error when nothing matches.
+        FindWindowW(PCWSTR(class.as_ptr()), PCWSTR(title.as_ptr()))
+            .map(|window| window != HWND::default())
+            .unwrap_or(false)
+    }
+}
+
 /// Shows the settings window and waits for it to close.
 ///
 /// `Ok(None)` means the user cancelled, which is not an error.
@@ -444,7 +467,7 @@ pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, S
         let instance = GetModuleHandleW(None)
             .map_err(|e| format!("could not reach this program's module handle: {e}"))?;
 
-        let class_name = wide_z("FreeSpeakSettings");
+        let class_name = wide_z(SETTINGS_CLASS);
         let window_class = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(settings_proc),
@@ -473,7 +496,7 @@ pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, S
         let x = ((GetSystemMetrics(SM_CXSCREEN) - width).max(0)) / 2;
         let y = ((GetSystemMetrics(SM_CYSCREEN) - height).max(0)) / 2;
 
-        let title = wide_z("FreeSpeak settings");
+        let title = wide_z(SETTINGS_TITLE);
         let hwnd = CreateWindowExW(
             // CONTROLPARENT is what lets the dialog manager walk the controls.
             WS_EX_CONTROLPARENT,
@@ -556,9 +579,17 @@ pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, S
             22,
             ID_SOUND,
         )?;
+        // What the line under the checkbox says depends on whether there is
+        // anything to fix: an empty key is the one thing that stops this app
+        // working at all, and the window that fixes it should say so.
+        let hint = if current.api_key.trim().is_empty() {
+            "Paste your API key here and press Save: that is all FreeSpeak needs."
+        } else {
+            "Hotkey, language, provider and the tones live in the config file."
+        };
         child(
             "STATIC",
-            "Hotkey, language, provider and the tones live in the config file.",
+            hint,
             WINDOW_STYLE(0),
             WINDOW_EX_STYLE(0),
             16,

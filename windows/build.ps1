@@ -28,7 +28,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $exe = Join-Path $rust 'target\release\freespeak.exe'
 $stub = Join-Path $rust 'target\release\freespeak-setup.exe'
-$setup = Join-Path $windows 'dist\FreeSpeakSetup.exe'
+# The installer lands in the root of the project, next to the README: it is the
+# one file to double-click, and hunting for it in a subfolder was the first thing
+# anyone complained about.
+$root = Split-Path -Parent $windows
+$setup = Join-Path $root 'FreeSpeakSetup.exe'
 
 # Relinking wipes the resources, so icons and version metadata are injected after
 # every build. The stub must be stamped BEFORE the payload is appended, because

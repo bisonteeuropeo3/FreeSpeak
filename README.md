@@ -149,12 +149,16 @@ MIT licensed, one Rust crate, no runtime to install.
 > `VOICE_NOT_NO_DIALOG` still work, so nothing that was set up by hand breaks.
 > Once you are happy, the old folder can be deleted.
 
-**Windows — double-click**
+**Windows — double-click `FreeSpeakSetup.exe`, in the top folder of this project**
 
-Run `windows\dist\FreeSpeakSetup.exe`. That is the whole install: it copies the
-app to `%LOCALAPPDATA%\Programs\freespeak`, registers the login entry, adds
-**FreeSpeak** and **Uninstall FreeSpeak** to the Start menu, and then offers to
-set your API key and start it. The Start-menu entry opens the settings window.
+It is the only file you have to go looking for. It copies the app to
+`%LOCALAPPDATA%\Programs\freespeak`, registers the login entry, adds **FreeSpeak**
+and **Uninstall FreeSpeak** to the Start menu, and — when there is no API key yet
+— opens the settings window so you can paste one. The Start-menu entry opens those
+settings again whenever you want them.
+
+![the settings window as it appears right after installing, with the key field
+empty and the hint to paste one](windows/assets/settings-first-run.png)
 
 To remove it, use **Uninstall FreeSpeak** in the Start menu, or run
 `uninstall.exe --uninstall` from the install folder. Your config, key and logs
@@ -309,25 +313,29 @@ the config file, so treat that file like a credential.
 Three folders: the code, and one per platform.
 
 ```
+FreeSpeakSetup.exe     the one file to double-click (generated, at the top on purpose)
+README.md
+LICENSE
+
 rust/                  the whole program - this is what compiles for every OS
   src/main.rs            hotkey loop, start/stop state machine, paste orchestration
   src/capture.rs         WASAPI/CoreAudio capture, downmix, 48k->16k, WAV writing
   src/stt.rs             multipart request building, response parsing, provider errors
   src/transport/         winhttp.rs (Windows), curl.rs (macOS/Linux), URL parsing
   src/tone.rs            waveform feedback tones through the default output device
-  src/platform/          mod.rs (shared parsing), windows.rs, macos.rs
-  src/config.rs          config file, env overrides, key prompt/saving, corrections
+  src/platform/          the backend per OS, plus the settings window and the
+                         shared parsing/escaping that both of them use
+  src/config.rs          config file, env overrides, saving, corrections, migration
   src/bin/setup.rs       the Windows installer stub
   target/                build output
 
 windows/               everything specific to installing on Windows
   build.ps1              builds the app and packages the installer
   install.ps1            script install, without going through the setup exe
-  dist/FreeSpeakSetup.exe the double-click installer (generated)
   tools/make-icon.ps1    draws assets\freespeak.ico (no rc.exe on this toolchain)
   tools/embed-icon.ps1   injects icon + version info into a built exe
   tools/make-setup.ps1   appends the app to the setup stub
-  assets/                the icon and its preview sheets
+  assets/                the icon, its preview sheets, and the settings screenshots
 
 mac/                   the macOS wrapper
   build-mac.sh           builds via ../rust and assembles FreeSpeak.app
@@ -335,5 +343,7 @@ mac/                   the macOS wrapper
 ```
 
 The Rust crate is a single program for both operating systems; the platform split
-lives in `src/platform/*.rs` behind `#[cfg]`, not in separate projects. The two
+lives in `src/platform/*.rs` behind `#[cfg]`, not in separate projects. Two things
+are generated rather than written: the Windows installer at the top of the tree,
+and the macOS bundle under `mac/dist/`.
 `dist/` folders are the deliverables: the Windows installer and the macOS bundle.

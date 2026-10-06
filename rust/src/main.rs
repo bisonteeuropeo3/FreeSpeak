@@ -138,8 +138,8 @@ fn main() {
         cfg.transport().resolve()
     ));
 
-    // First run: ask for the key before anything else, so the very first hotkey
-    // press works. Without a console there is nowhere to type it, so explain.
+    // First run: get the key before anything else, so the very first hotkey
+    // press works.
     if cfg.api_key.trim().is_empty() {
         if platform::has_console() {
             if !prompt_for_key() {
@@ -147,10 +147,28 @@ fn main() {
             }
             cfg = Config::load();
         } else {
-            fatal(&format!(
-                "FreeSpeak has no API key yet.\n\nRun this in a terminal:\n    freespeak --set-key\n\nor put `api_key = ...` in\n{}",
-                config::config_path().display()
-            ));
+            // No terminal to type into. Refusing to start here was reported as
+            // "it just didn't start" - from the outside that is indistinguishable
+            // from a broken install. Open the one window that can fix it and keep
+            // going: the config is re-read on every keypress, so the key starts
+            // working the moment it is saved.
+            //
+            // Unless a window is already open: then the user is in the middle of
+            // typing a key, and a second window on top of it is just noise.
+            if platform::settings_window_open() {
+                logging::line("no API key yet, and the settings window is already open");
+            } else {
+                logging::line("no API key yet; opening the settings window");
+                show_settings(&cfg, false);
+                cfg = Config::load();
+                if cfg.api_key.trim().is_empty() {
+                    logging::line(
+                        "still no API key: dictation will report an error until one is set",
+                    );
+                } else {
+                    logging::line("API key set; carrying on");
+                }
+            }
         }
     }
 
@@ -527,15 +545,26 @@ fn test_tones(cfg: &Config, idle_seconds: u64) {
 /// window exists to configure the app, not to leave the user with nothing
 /// running once they close it.
 fn show_settings(cfg: &Config, ensure_running: bool) {
-    if ensure_running {
+    // A background copy is worth starting only when there is a key for it to use:
+    // without one it would immediately open a settings window of its own, which
+    // is how a fresh install ended up with two stacked on top of each other.
+    let has_key = !cfg.api_key.trim().is_empty();
+    if ensure_running && has_key {
         start_background_copy();
     }
     match platform::show_settings(cfg) {
         Ok(Some(chosen)) => match config::save_settings(&chosen.api_key, chosen.beep) {
-            Ok(path) => logging::line(&format!(
-                "settings saved to {} (a running FreeSpeak picks them up on the next keypress)",
-                path.display()
-            )),
+            Ok(path) => {
+                logging::line(&format!(
+                    "settings saved to {} (a running FreeSpeak picks them up on the next keypress)",
+                    path.display()
+                ));
+                // Now that there is a key, make sure something is running to use
+                // it. Harmless when one already is.
+                if ensure_running {
+                    start_background_copy();
+                }
+            }
             Err(err) => {
                 // The dialog is what the user sees; the log is what they can
                 // send when the dialog was suppressed or missed.
