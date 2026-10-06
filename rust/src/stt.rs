@@ -9,7 +9,7 @@
 use crate::config::Config;
 use crate::transport::{self, Endpoint, Transport};
 
-const BOUNDARY: &str = "----voicenot7f3a9c2b1e4d";
+const BOUNDARY: &str = "----freespeak7f3a9c2b1e4d";
 
 /// Most providers cap uploads at 25 MB; Groq's free tier does.
 const MAX_UPLOAD_BYTES: usize = 24 * 1024 * 1024;
@@ -70,7 +70,7 @@ pub fn transcribe(cfg: &Config, wav: &[u8]) -> Result<String, String> {
     let endpoint = transport::parse_url(&url)?;
     if !has_api_key(cfg) {
         return Err(format!(
-            "no API key configured - run `voice-not --set-key`, or add `api_key = ...` to {}",
+            "no API key configured - run `freespeak --set-key`, or add `api_key = ...` to {}",
             crate::config::config_path().display()
         ));
     }
@@ -103,7 +103,7 @@ fn interpret(
         let lowered = text.to_ascii_lowercase();
         if lowered.contains("api key") || lowered.contains("unauthorized") || status == 401 || status == 403 {
             return Err(format!(
-                "the provider rejected the API key - check it with `voice-not --set-key`: {}",
+                "the provider rejected the API key - check it with `freespeak --set-key`: {}",
                 clip(text, 200)
             ));
         }

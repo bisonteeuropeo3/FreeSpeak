@@ -1,8 +1,7 @@
-# Voice Not
+# FreeSpeak
 
 Press a global hotkey, talk, press it again, and the transcript lands in whatever
 app you were typing in — transcribed by **any OpenAI-compatible API**.
-
 It runs with **no window at all**: nothing in the taskbar, nothing in Alt-Tab,
 nothing to close. It starts itself at login and waits quietly for the hotkey.
 
@@ -63,7 +62,7 @@ The tones are real waveforms played through your default output device, so they
 work the same on every platform (the old Windows `Beep` API could be silent on
 some audio setups, which is why the stop sound was easy to miss).
 
-**`voice-not --test-tones`** plays all four and reports how long each took to
+**`freespeak --test-tones`** plays all four and reports how long each took to
 reach the audio driver; `--test-tones 30` waits 30 seconds first, so the cue has
 to wake a device that has gone to sleep. If a cue ever arrives late or not at
 all, the log says so with numbers — playback waits for the driver to take every
@@ -74,12 +73,12 @@ It is a **toggle**, not push-to-talk: tap it, don't hold it. The transcript also
 stays on your clipboard.
 
 **To stop it:** press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd>,
-or end the `voice-not` process in Task Manager / Activity Monitor. Starting it
+or end the `freespeak` process in Task Manager / Activity Monitor. Starting it
 twice is harmless: the second copy notices the first and exits.
 
 ## Any OpenAI-compatible provider
 
-Yes — that was the point of the `base_url` setting. Voice Not sends a plain
+Yes — that was the point of the `base_url` setting. FreeSpeak sends a plain
 OpenAI-style `multipart/form-data` POST to `{base_url}/audio/transcriptions`
 with `file`, `model`, `language`, `prompt`, `response_format=json` and
 `temperature`, and reads `text` out of the JSON reply. Anything implementing that
@@ -114,14 +113,28 @@ here.
 
 ## Install
 
+```bash
+git clone https://github.com/bisonteeuropeo3/FreeSpeak
+```
+
+MIT licensed, one Rust crate, no runtime to install.
+
+> **Upgrading from Voice Not?** The app was renamed. The installer removes the
+> old copy, its login entry and its Start-menu entries, and the new build copies
+> your config — API key included — from `%LOCALAPPDATA%\voice-not` to
+> `%LOCALAPPDATA%\freespeak` on its first start, logging that it did. The
+> environment variables `VOICE_NOT_API_KEY`, `VOICE_NOT_DATA_DIR` and
+> `VOICE_NOT_NO_DIALOG` still work, so nothing that was set up by hand breaks.
+> Once you are happy, the old folder can be deleted.
+
 **Windows — double-click**
 
-Run `windows\dist\VoiceNotSetup.exe`. That is the whole install: it copies the
-app to `%LOCALAPPDATA%\Programs\voice-not`, registers the login entry, adds
-**Voice Not** and **Uninstall Voice Not** to the Start menu, and then offers to
+Run `windows\dist\FreeSpeakSetup.exe`. That is the whole install: it copies the
+app to `%LOCALAPPDATA%\Programs\freespeak`, registers the login entry, adds
+**FreeSpeak** and **Uninstall FreeSpeak** to the Start menu, and then offers to
 set your API key and start it.
 
-To remove it, use **Uninstall Voice Not** in the Start menu, or run
+To remove it, use **Uninstall FreeSpeak** in the Start menu, or run
 `uninstall.exe --uninstall` from the install folder. Your config, key and logs
 are always kept.
 
@@ -137,12 +150,12 @@ windows\install.ps1 -Uninstall
 
 ```bash
 mac/build-mac.sh                                            # needs Xcode CLT
-open "mac/dist/Voice Not.app"                               # runs it, no window
-"mac/dist/Voice Not.app/Contents/MacOS/voice-not" --set-key # paste your API key
-"mac/dist/Voice Not.app/Contents/MacOS/voice-not" --install-autostart
+open "mac/dist/FreeSpeak.app"                               # runs it, no window
+"mac/dist/FreeSpeak.app/Contents/MacOS/freespeak" --set-key # paste your API key
+"mac/dist/FreeSpeak.app/Contents/MacOS/freespeak" --install-autostart
 ```
 
-The script produces a real `Voice Not.app` bundle, and that matters for two
+The script produces a real `FreeSpeak.app` bundle, and that matters for two
 reasons beyond tidiness:
 
 * **Microphone.** Since macOS 10.14 the microphone is protected, and the usage
@@ -154,22 +167,22 @@ reasons beyond tidiness:
   it silently; the bundle is signed ad hoc, so it keeps it.
 
 Grant the microphone when macOS asks (or add the app by hand in System Settings →
-Privacy & Security → **Microphone**). For pasting, add `Voice Not.app` with the
-**+** button under **Accessibility** — Voice Not opens that pane for you when a
+Privacy & Security → **Microphone**). For pasting, add `FreeSpeak.app` with the
+**+** button under **Accessibility** — FreeSpeak opens that pane for you when a
 paste is blocked. Without it the transcript still reaches the clipboard, so
 nothing is lost.
 
-On the first run with no key, Voice Not asks for it and saves it. Later, change
-it any time with `voice-not --set-key`. It also accepts `VOICE_NOT_API_KEY`,
+On the first run with no key, FreeSpeak asks for it and saves it. Later, change
+it any time with `freespeak --set-key`. It also accepts `FREESPEAK_API_KEY`,
 `GROQ_API_KEY` or `OPENAI_API_KEY` from the environment, which take precedence.
 
 Config and logs live in:
 
 | | |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\voice-not\` |
-| macOS | `~/Library/Application Support/voice-not/` |
-| Linux | `~/.config/voice-not/` (or `$VOICE_NOT_DATA_DIR`) |
+| Windows | `%LOCALAPPDATA%\freespeak\` |
+| macOS | `~/Library/Application Support/freespeak/` |
+| Linux | `~/.config/freespeak/` (or `$FREESPEAK_DATA_DIR`) |
 
 The important options, all documented in the generated config file:
 
@@ -180,7 +193,7 @@ model = whisper-large-v3-turbo
 language =                        ; empty = detect per recording (see below)
 hotkey = ctrl+alt+space           ; on macOS, ctrl is control - write cmd+alt+space for Command
 quit_hotkey = ctrl+alt+shift+q
-replacements = VoiceNote=Voice Not, Grok=Groq
+replacements = Grok=Groq, postgres=Postgres
 device =                          ; part of an input device name; see --devices
 paste = true                      ; false = clipboard only
 beep = true                       ; master switch for every cue
@@ -192,15 +205,15 @@ transport = auto                  ; auto, winhttp (Windows) or curl
 ### Command line
 
 ```
-voice-not --set-key            ask for the API key and save it
-voice-not --devices            list input devices
-voice-not --init               create the config file
-voice-not --install-autostart  start at login
-voice-not --uninstall-autostart
-voice-not --transcribe-file a.wav   transcribe a file and print it
-voice-not --test-paste hello        check clipboard + paste keystroke
-voice-not --test-tones [secs]       hear the four cues and time them
-voice-not --hotkey ctrl+shift+d --language es --base-url http://localhost:8080/v1
+freespeak --set-key            ask for the API key and save it
+freespeak --devices            list input devices
+freespeak --init               create the config file
+freespeak --install-autostart  start at login
+freespeak --uninstall-autostart
+freespeak --transcribe-file a.wav   transcribe a file and print it
+freespeak --test-paste hello        check clipboard + paste keystroke
+freespeak --test-tones [secs]       hear the four cues and time them
+freespeak --hotkey ctrl+shift+d --language es --base-url http://localhost:8080/v1
 ```
 
 On Windows, run these from a terminal: the release binary has no console of its
@@ -224,8 +237,8 @@ Measured on Windows: a 566 KB `.exe`, 13.4 MB working set, 0 ms of CPU across a
 ## Troubleshooting
 
 * **Is it running?** There is no window to look for. Task Manager / Activity
-  Monitor shows the `voice-not` process, and the log tells the story.
-* **A cue is late or missing** — run `voice-not --test-tones 30`. It plays each
+  Monitor shows the `freespeak` process, and the log tells the story.
+* **A cue is late or missing** — run `freespeak --test-tones 30`. It plays each
   one, prints how long it took to reach the audio driver, and the log records
   any cue that had to wait. A cue is never cut short by a fixed delay any more;
   the earlier version guessed one and the start sound lost that race.
@@ -235,18 +248,19 @@ Measured on Windows: a 566 KB `.exe`, 13.4 MB working set, 0 ms of CPU across a
   Privacy & Security → Microphone, and make sure you are running the `.app`
   bundle: a bare binary has no `Info.plist` and can never be authorised.
 * **macOS: nothing is pasted** — grant Accessibility (System Settings → Privacy &
-  Security → Accessibility). Voice Not opens that pane for you the first time a
+  Security → Accessibility). FreeSpeak opens that pane for you the first time a
   paste is blocked. Hotkeys, recording and the tones need no permission.
 * **Windows: the installer said the app was in use** — it now waits for the
   running copy to release the file and moves it aside if it will not, so
-  upgrading over a running Voice Not works; if it still refuses, quit the app
+  upgrading over a running FreeSpeak works; if it still refuses, quit the app
   from Task Manager and run the installer again.
 * **It translates instead of transcribing** — `language` is a *forcing* hint. With
   `language = en`, Italian speech comes back as English; with `it`, English comes
   back as Italian. Leave it empty to detect per recording, which measured the same
   speed and handled mixed and two-word utterances correctly.
-* **A word is consistently misheard** — Whisper heard "Groq" as "Grok" and
-  "Voice Not" as "VoiceNote" in testing. `prompt` is not a reliable fix (a
+* **A word is consistently misheard** — Whisper heard "Groq" as "Grok" in
+  testing, and older builds of this app had the same problem with their own name.
+  `prompt` is not a reliable fix (a
   comma-separated word list stripped punctuation; a full sentence still produced
   "Grog"). Use `replacements`: a deterministic whole-word rewrite before pasting.
 * **HTTP 404 from your provider** — that provider has no `/audio/transcriptions`
@@ -258,7 +272,7 @@ Measured on Windows: a 566 KB `.exe`, 13.4 MB working set, 0 ms of CPU across a
   clipboard, so paste it yourself.
 * **"ignored: silence"** — below `silence_rms`; the log prints the measured level
   so you can calibrate it.
-* **`VOICE_NOT_NO_DIALOG=1`** suppresses error dialogs, for scripted runs.
+* **`FREESPEAK_NO_DIALOG=1`** suppresses error dialogs, for scripted runs.
 
 ## Privacy
 
@@ -286,15 +300,15 @@ rust/                  the whole program - this is what compiles for every OS
 windows/               everything specific to installing on Windows
   build.ps1              builds the app and packages the installer
   install.ps1            script install, without going through the setup exe
-  dist/VoiceNotSetup.exe the double-click installer (generated)
-  tools/make-icon.ps1    draws assets\voice-not.ico (no rc.exe on this toolchain)
+  dist/FreeSpeakSetup.exe the double-click installer (generated)
+  tools/make-icon.ps1    draws assets\freespeak.ico (no rc.exe on this toolchain)
   tools/embed-icon.ps1   injects icon + version info into a built exe
   tools/make-setup.ps1   appends the app to the setup stub
   assets/                the icon and its preview sheets
 
 mac/                   the macOS wrapper
-  build-mac.sh           builds via ../rust and assembles Voice Not.app
-  dist/Voice Not.app     the bundle to double-click and to keep (generated)
+  build-mac.sh           builds via ../rust and assembles FreeSpeak.app
+  dist/FreeSpeak.app     the bundle to double-click and to keep (generated)
 ```
 
 The Rust crate is a single program for both operating systems; the platform split

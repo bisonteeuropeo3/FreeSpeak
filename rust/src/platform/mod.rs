@@ -20,11 +20,11 @@ pub use windows::*;
 
 #[cfg(not(any(windows, target_os = "macos")))]
 compile_error!(
-    "Voice Not supports Windows and macOS. A Linux backend needs X11/Wayland hotkey \
+    "FreeSpeak supports Windows and macOS. A Linux backend needs X11/Wayland hotkey \
      handling; the audio, HTTP and clipboard layers are already portable."
 );
 
-pub const APP_NAME: &str = "Voice Not";
+pub const APP_NAME: &str = "FreeSpeak";
 
 pub const HOTKEY_TOGGLE: i32 = 1;
 pub const HOTKEY_QUIT: i32 = 2;
@@ -126,7 +126,7 @@ pub fn applescript_string(value: &str) -> String {
     quoted
 }
 
-/// The LaunchAgent that starts Voice Not at login (`~/Library/LaunchAgents`).
+/// The LaunchAgent that starts FreeSpeak at login (`~/Library/LaunchAgents`).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn launch_agent_plist(program: &Path, stdout_log: &Path, stderr_log: &Path) -> String {
     format!(
@@ -135,7 +135,7 @@ pub fn launch_agent_plist(program: &Path, stdout_log: &Path, stderr_log: &Path) 
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.voicenot</string>
+    <string>com.freespeak</string>
     <key>ProgramArguments</key>
     <array>
         <string>{program}</string>
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn the_login_entry_stays_valid_xml_for_awkward_home_directories() {
         let plist = launch_agent_plist(
-            Path::new("/Users/a&b/Voice Not.app/Contents/MacOS/voice-not"),
+            Path::new("/Users/a&b/FreeSpeak.app/Contents/MacOS/freespeak"),
             Path::new("/Users/a&b/Library/dictate.log"),
             Path::new("/Users/a&b/Library/launchd.log"),
         );
@@ -217,7 +217,7 @@ mod tests {
             !plist.contains("a&b"),
             "a raw ampersand would make launchd reject the file:\n{plist}"
         );
-        assert!(plist.contains("/Users/a&amp;b/Voice Not.app/Contents/MacOS/voice-not"));
+        assert!(plist.contains("/Users/a&amp;b/FreeSpeak.app/Contents/MacOS/freespeak"));
         // The keys launchd needs to accept the job at all.
         for key in [
             "<key>Label</key>",
@@ -253,10 +253,10 @@ mod tests {
     #[test]
     fn an_app_bundle_is_recognised() {
         assert!(inside_app_bundle(Path::new(
-            "/Applications/Voice Not.app/Contents/MacOS/voice-not"
+            "/Applications/FreeSpeak.app/Contents/MacOS/freespeak"
         )));
-        assert!(!inside_app_bundle(Path::new("/Users/o/voice-not/target/release/voice-not")));
+        assert!(!inside_app_bundle(Path::new("/Users/o/freespeak/target/release/freespeak")));
         // A directory that merely contains the letters must not count.
-        assert!(!inside_app_bundle(Path::new("/Users/o/apps/voice-not")));
+        assert!(!inside_app_bundle(Path::new("/Users/o/apps/freespeak")));
     }
 }

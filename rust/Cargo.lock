@@ -261,6 +261,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
+name = "freespeak"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "cpal",
+ "serde_json",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -952,16 +962,6 @@ name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
-
-[[package]]
-name = "voice-not"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "cpal",
- "serde_json",
- "windows 0.58.0",
-]
 
 [[package]]
 name = "walkdir"

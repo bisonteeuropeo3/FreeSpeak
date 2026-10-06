@@ -1,7 +1,7 @@
-# Builds Voice Not for Windows:
+# Builds FreeSpeak for Windows:
 #
-#   rust\target\release\voice-not.exe          the app
-#   windows\dist\VoiceNotSetup.exe             the double-click installer
+#   rust\target\release\freespeak.exe          the app
+#   windows\dist\FreeSpeakSetup.exe             the double-click installer
 #
 # Nothing here is machine specific; run it after any source change.
 $ErrorActionPreference = 'Stop'
@@ -26,9 +26,9 @@ $manifest = Join-Path $rust 'Cargo.toml'
 cmd /c "cargo build --release --manifest-path `"$manifest`" 2>&1"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$exe = Join-Path $rust 'target\release\voice-not.exe'
-$stub = Join-Path $rust 'target\release\voice-not-setup.exe'
-$setup = Join-Path $windows 'dist\VoiceNotSetup.exe'
+$exe = Join-Path $rust 'target\release\freespeak.exe'
+$stub = Join-Path $rust 'target\release\freespeak-setup.exe'
+$setup = Join-Path $windows 'dist\FreeSpeakSetup.exe'
 
 # Relinking wipes the resources, so icons and version metadata are injected after
 # every build. The stub must be stamped BEFORE the payload is appended, because
@@ -36,7 +36,7 @@ $setup = Join-Path $windows 'dist\VoiceNotSetup.exe'
 try {
     & (Join-Path $windows 'tools\embed-icon.ps1') -Exe $exe | Out-Null
     & (Join-Path $windows 'tools\embed-icon.ps1') -Exe $stub `
-        -Description 'Voice Not setup - installs the dictation app' | Out-Null
+        -Description 'FreeSpeak setup - installs the dictation app' | Out-Null
 } catch {
     Write-Warning "could not embed the icon: $_"
 }

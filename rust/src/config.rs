@@ -4,8 +4,14 @@
 use crate::tone::Tone;
 use std::path::PathBuf;
 
-/// Environment variables checked for the API key, in order.
-const KEY_VARS: [&str; 3] = ["VOICE_NOT_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY"];
+/// Environment variables checked for the API key, in order. The pre-rename name
+/// still works, so an environment that was set up before keeps working.
+const KEY_VARS: [&str; 4] = [
+    "FREESPEAK_API_KEY",
+    "VOICE_NOT_API_KEY",
+    "GROQ_API_KEY",
+    "OPENAI_API_KEY",
+];
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -69,10 +75,10 @@ impl Default for Config {
 }
 
 const TEMPLATE: &str = "\
-# Voice Not configuration
+# FreeSpeak configuration
 # Everything here is optional except api_key.
 
-# Your API key. The VOICE_NOT_API_KEY, GROQ_API_KEY and OPENAI_API_KEY
+# Your API key. The FREESPEAK_API_KEY, GROQ_API_KEY and OPENAI_API_KEY
 # environment variables all take precedence over this file.
 api_key =
 
@@ -127,7 +133,7 @@ quit_hotkey = ctrl+alt+shift+q
 
 # Input device to use, matched case-insensitively as a substring of the device
 # name. Empty means the system default input device.
-# Run `voice-not --devices` to list the names.
+# Run `freespeak --devices` to list the names.
 device =
 
 # How to reach the API: auto, winhttp or curl.
@@ -178,36 +184,106 @@ min_ms = 300
 silence_rms = 0.003
 ";
 
+/// Where per-user files live on this system, before the app name is appended.
 #[cfg(windows)]
-fn default_data_dir() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(base).join("voice-not")
+fn data_root() -> PathBuf {
+    PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string()))
 }
 
 #[cfg(target_os = "macos")]
-fn default_data_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+fn data_root() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
         .join("Library")
         .join("Application Support")
-        .join("voice-not")
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn default_data_dir() -> PathBuf {
-    let base = std::env::var("XDG_CONFIG_HOME")
+fn data_root() -> PathBuf {
+    std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".config")
-        });
-    base.join("voice-not")
+        })
+}
+
+fn default_data_dir() -> PathBuf {
+    data_root().join("freespeak")
+}
+
+/// The folder the app used before it was renamed to FreeSpeak.
+fn legacy_data_dir() -> PathBuf {
+    data_root().join("voice-not")
+}
+
+/// Name of the marker that records that the move already happened.
+const MIGRATED: &str = "migrated-from-voice-not";
+
+/// True when `text` is a config file that actually carries a key.
+fn has_api_key(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        !line.starts_with('#')
+            && line
+                .split_once('=')
+                .map(|(key, value)| key.trim() == "api_key" && !value.trim().is_empty())
+                .unwrap_or(false)
+    })
+}
+
+/// Copies the settings across the rename, once, so an existing API key keeps
+/// working. Returns the old folder when it moved something.
+///
+/// Deliberately one-shot, marked with a file: without the marker, blanking the
+/// key on purpose would silently bring the old one back on the next start.
+pub fn migrate_legacy_data() -> Option<PathBuf> {
+    let new = data_dir();
+    let old = legacy_data_dir();
+    if new == old || new.join(MIGRATED).exists() {
+        return None;
+    }
+
+    let old_config = old.join("config");
+    if !old_config.exists() {
+        return None;
+    }
+    // Never overwrite a config that already has a key of its own.
+    let new_config = new.join("config");
+    let new_text = std::fs::read_to_string(&new_config).unwrap_or_default();
+    if new_config.exists() && has_api_key(&new_text) {
+        let _ = std::fs::write(new.join(MIGRATED), "nothing to move\n");
+        return None;
+    }
+
+    if std::fs::create_dir_all(&new).is_err() {
+        return None;
+    }
+    for name in ["config", "transcripts.log"] {
+        let from = old.join(name);
+        if from.exists() {
+            let _ = std::fs::copy(&from, new.join(name));
+        }
+    }
+    let _ = std::fs::write(
+        new.join(MIGRATED),
+        format!(
+            "settings were copied here from {} when the app was renamed to FreeSpeak\n",
+            old.display()
+        ),
+    );
+    Some(old)
 }
 
 pub fn data_dir() -> PathBuf {
-    match std::env::var("VOICE_NOT_DATA_DIR") {
-        Ok(dir) if !dir.trim().is_empty() => PathBuf::from(dir),
-        _ => default_data_dir(),
+    // The pre-rename variable is still honoured: changing the name should not
+    // move anyone's files out from under them.
+    for name in ["FREESPEAK_DATA_DIR", "VOICE_NOT_DATA_DIR"] {
+        if let Ok(dir) = std::env::var(name) {
+            if !dir.trim().is_empty() {
+                return PathBuf::from(dir);
+            }
+        }
     }
+    default_data_dir()
 }
 
 pub fn config_path() -> PathBuf {
@@ -338,7 +414,7 @@ impl Config {
                 }
             }
         }
-        if let Ok(url) = std::env::var("VOICE_NOT_BASE_URL") {
+        if let Ok(url) = std::env::var("FREESPEAK_BASE_URL") {
             let url = url.trim();
             if !url.is_empty() {
                 cfg.base_url = url.to_string();

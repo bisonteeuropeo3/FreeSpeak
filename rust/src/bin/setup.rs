@@ -1,6 +1,6 @@
-//! VoiceNotSetup: the one-file Windows installer.
+//! FreeSpeakSetup: the one-file Windows installer.
 //!
-//! `windows/tools/make-setup.ps1` appends the built `voice-not.exe` to this stub,
+//! `windows/tools/make-setup.ps1` appends the built `freespeak.exe` to this stub,
 //! followed by its length and a magic marker, so nothing is embedded at compile
 //! time and the stub can be built before the payload exists. Trailing bytes are
 //! ignored by the PE loader, so the result is still a normal executable.
@@ -11,7 +11,7 @@
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("VoiceNotSetup only runs on Windows. On macOS use mac/build-mac.sh instead.");
+    eprintln!("FreeSpeakSetup only runs on Windows. On macOS use mac/build-mac.sh instead.");
     std::process::exit(1);
 }
 
@@ -29,10 +29,12 @@ mod installer {
         MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_YESNO,
     };
 
-    const APP: &str = "Voice Not";
-    const EXE: &str = "voice-not.exe";
+    const APP: &str = "FreeSpeak";
+    const EXE: &str = "freespeak.exe";
+    /// The image name the app had before it was renamed.
+    const PREVIOUS_EXE: &str = "voice-not.exe";
     const UNINSTALLER: &str = "uninstall.exe";
-    const MAGIC: &[u8; 8] = b"VNSETUP1";
+    const MAGIC: &[u8; 8] = b"FSSETUP1";
 
     pub fn run() {
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -85,12 +87,25 @@ mod installer {
 
     pub fn install_dir() -> PathBuf {
         let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base).join("Programs").join("voice-not")
+        PathBuf::from(base).join("Programs").join("freespeak")
     }
 
     fn config_path() -> PathBuf {
         let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(base).join("freespeak").join("config")
+    }
+
+    /// The config file of the pre-rename app, if it is still there. The app moves
+    /// it across on its first start; the installer has to look in both places or
+    /// it would think the key was never set and ask for it again.
+    fn previous_config_path() -> PathBuf {
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
         PathBuf::from(base).join("voice-not").join("config")
+    }
+
+    fn previous_install_dir() -> PathBuf {
+        let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(base).join("Programs").join("voice-not")
     }
 
     fn start_menu() -> PathBuf {
@@ -104,7 +119,7 @@ mod installer {
 
     // --------------------------------------------------------------- payload
 
-    /// Reads the appended `voice-not.exe` out of this file.
+    /// Reads the appended `freespeak.exe` out of this file.
     fn payload() -> Result<Vec<u8>, String> {
         let exe = std::env::current_exe()
             .map_err(|e| format!("could not locate the installer: {e}"))?;
@@ -113,7 +128,7 @@ mod installer {
 
         if bytes.len() < 32 || &bytes[bytes.len() - 8..] != MAGIC {
             return Err(
-                "This file is not a Voice Not installer (no payload attached).\n\n\
+                "This file is not a FreeSpeak installer (no payload attached).\n\n\
                  Build one with windows\\build.ps1."
                     .to_string(),
             );
@@ -131,24 +146,33 @@ mod installer {
     }
 
     fn has_api_key() -> bool {
-        for name in ["VOICE_NOT_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY"] {
+        for name in [
+            "FREESPEAK_API_KEY",
+            "VOICE_NOT_API_KEY",
+            "GROQ_API_KEY",
+            "OPENAI_API_KEY",
+        ] {
             if std::env::var(name).map(|v| !v.trim().is_empty()).unwrap_or(false) {
                 return true;
             }
         }
-        std::fs::read_to_string(config_path())
-            .map(|text| {
-                text.lines().any(|line| {
-                    let trimmed = line.trim_start();
-                    !trimmed.starts_with('#')
-                        && trimmed.starts_with("api_key")
-                        && trimmed
-                            .split_once('=')
-                            .map(|(_, value)| !value.trim().is_empty())
-                            .unwrap_or(false)
-                })
+        [config_path(), previous_config_path()]
+            .iter()
+            .any(|path| {
+                std::fs::read_to_string(path)
+                    .map(|text| {
+                        text.lines().any(|line| {
+                            let trimmed = line.trim_start();
+                            !trimmed.starts_with('#')
+                                && trimmed.starts_with("api_key")
+                                && trimmed
+                                    .split_once('=')
+                                    .map(|(_, value)| !value.trim().is_empty())
+                                    .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
             })
-            .unwrap_or(false)
     }
 
     // ------------------------------------------------------------ dialogs
@@ -230,9 +254,57 @@ mod installer {
     }
 
     fn stop_running() {
-        let _ = Command::new("taskkill")
-            .args(["/IM", EXE, "/F"])
-            .output();
+        for image in [EXE, PREVIOUS_EXE] {
+            let _ = Command::new("taskkill")
+                .args(["/IM", image, "/F"])
+                .output();
+        }
+    }
+
+    /// Removes the copy installed under the app's previous name.
+    ///
+    /// Without this, upgrading left two apps installed side by side, two login
+    /// entries competing, and two Start-menu entries - one of which still
+    /// started the old build.
+    fn remove_previous_install(silent: bool) {
+        let dir = previous_install_dir();
+        if !dir.exists() {
+            return;
+        }
+        // Let the old build unregister itself first: it knows its own key name.
+        let old_exe = dir.join(PREVIOUS_EXE);
+        if old_exe.exists() {
+            let _ = hidden(Command::new(&old_exe))
+                .arg("--uninstall-autostart")
+                .output();
+        }
+
+        let programs = start_menu();
+        for name in ["Voice Not.lnk", "Uninstall Voice Not.lnk"] {
+            let _ = std::fs::remove_file(programs.join(name));
+        }
+
+        // The old image may still be mapped for a moment after being killed.
+        for attempt in 0..15 {
+            if !dir.exists() {
+                break;
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+            if !dir.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200 * (attempt.min(5) + 1)));
+        }
+        if !dir.exists() {
+            if !silent {
+                println!("removed the previous install {}", dir.display());
+            }
+        } else if !silent {
+            println!(
+                "note: {} could not be removed yet; delete it by hand once FreeSpeak is closed",
+                dir.display()
+            );
+        }
     }
 
     /// Puts `payload` in place of the installed app.
@@ -262,7 +334,7 @@ mod installer {
         let _ = std::fs::remove_file(&old);
         std::fs::rename(target, &old).map_err(|e| {
             format!(
-                "could not replace {}: {e}\n\nQuit Voice Not and run this installer again.",
+                "could not replace {}: {e}\n\nQuit FreeSpeak and run this installer again.",
                 target.display()
             )
         })?;
@@ -301,17 +373,21 @@ mod installer {
 
         let programs = start_menu();
         let _ = create_shortcut(
-            &programs.join("Voice Not.lnk"),
+            &programs.join("FreeSpeak.lnk"),
             &target,
             "",
-            "Voice Not - push-to-talk dictation",
+            "FreeSpeak - push-to-talk dictation",
         );
         let _ = create_shortcut(
-            &programs.join("Uninstall Voice Not.lnk"),
+            &programs.join("Uninstall FreeSpeak.lnk"),
             &dir.join(UNINSTALLER),
             "--uninstall",
-            "Remove Voice Not",
+            "Remove FreeSpeak",
         );
+
+        // Last, once this app is fully in place: drop the copy that was installed
+        // under the previous name, its login entry and its Start-menu entries.
+        remove_previous_install(silent);
 
         if silent {
             return Ok(());
@@ -320,13 +396,13 @@ mod installer {
         if has_api_key() {
             if ask(
                 APP,
-                "Voice Not is installed and will start at login.\n\nStart it now?",
+                "FreeSpeak is installed and will start at login.\n\nStart it now?",
             ) {
                 let _ = Command::new(&target).spawn();
             }
         } else if ask(
             APP,
-            "Voice Not is installed and will start at login.\n\n\
+            "FreeSpeak is installed and will start at login.\n\n\
              It still needs an API key to transcribe.\n\nSet it up now?",
         ) {
             // The prompt needs a console, so open one.
@@ -337,7 +413,7 @@ mod installer {
             info(
                 APP,
                 &format!(
-                    "You can add the key whenever you like:\n\n    voice-not --set-key\n\n\
+                    "You can add the key whenever you like:\n\n    freespeak --set-key\n\n\
                      or edit this file:\n{}",
                     config_path().display()
                 ),
@@ -357,10 +433,13 @@ mod installer {
             let _ = Command::new(&target).arg("--uninstall-autostart").output();
         }
         stop_running();
+        // An upgrade may have left the pre-rename copy behind; uninstalling
+        // should not leave half the app installed.
+        remove_previous_install(true);
 
         let programs = start_menu();
-        let _ = std::fs::remove_file(programs.join("Voice Not.lnk"));
-        let _ = std::fs::remove_file(programs.join("Uninstall Voice Not.lnk"));
+        let _ = std::fs::remove_file(programs.join("FreeSpeak.lnk"));
+        let _ = std::fs::remove_file(programs.join("Uninstall FreeSpeak.lnk"));
 
         // Remove everything except this running file.
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -387,8 +466,8 @@ mod installer {
         if !silent {
             info(
                 APP,
-                "Voice Not has been removed.\n\nYour config, API key and logs in \
-                 %LOCALAPPDATA%\\voice-not were left alone.",
+                "FreeSpeak has been removed.\n\nYour config, API key and logs in \
+                 %LOCALAPPDATA%\\freespeak were left alone.",
                 false,
             );
         }
@@ -399,7 +478,7 @@ mod installer {
         // everything it needs to remove.
         let me = std::env::current_exe().unwrap_or_default();
         let mut cleanup = std::env::temp_dir();
-        cleanup.push(format!("voice-not-uninstall-{}.exe", std::process::id()));
+        cleanup.push(format!("freespeak-uninstall-{}.exe", std::process::id()));
         if std::fs::copy(&me, &cleanup).is_ok() {
             let _ = hidden(Command::new(&cleanup))
                 .args(["--cleanup", &dir.display().to_string()])
@@ -427,7 +506,7 @@ mod installer {
 
         // Out of retries: leave a note so the cause is not a mystery.
         let _ = std::fs::write(
-            std::env::temp_dir().join("voice-not-uninstall.log"),
+            std::env::temp_dir().join("freespeak-uninstall.log"),
             format!(
                 "could not remove {}\nstill present after 40 attempts\n",
                 dir.display()
@@ -442,7 +521,7 @@ mod installer {
         #[test]
         fn replace_app_creates_the_app_and_overwrites_it_afterwards() {
             let dir = std::env::temp_dir().join(format!(
-                "voice-not-setup-test-{}-{:?}",
+                "freespeak-setup-test-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));

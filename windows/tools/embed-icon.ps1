@@ -8,15 +8,15 @@
 param(
     [Parameter(Mandatory)][string]$Exe,
     [string]$Icon,
-    [string]$ProductName = 'Voice Not',
-    [string]$Description = 'Voice Not - push-to-talk dictation for Windows',
+    [string]$ProductName = 'FreeSpeak',
+    [string]$Description = 'FreeSpeak - push-to-talk dictation for Windows',
     [string]$Version = '0.1.0.0'
 )
 
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
-if (-not $Icon) { $Icon = Join-Path $root 'assets\voice-not.ico' }
+if (-not $Icon) { $Icon = Join-Path $root 'assets\freespeak.ico' }
 
 if (-not (Test-Path $Exe)) { throw "exe not found: $Exe" }
 if (-not (Test-Path $Icon)) { throw "icon not found: $Icon (run tools\make-icon.ps1)" }
@@ -151,8 +151,8 @@ $strings = @(
     @('CompanyName', $ProductName),
     @('FileDescription', $Description),
     @('FileVersion', $Version),
-    @('InternalName', 'voice-not'),
-    @('OriginalFilename', 'voice-not.exe'),
+    @('InternalName', 'freespeak'),
+    @('OriginalFilename', 'freespeak.exe'),
     @('ProductName', $ProductName),
     @('ProductVersion', $Version)
 )

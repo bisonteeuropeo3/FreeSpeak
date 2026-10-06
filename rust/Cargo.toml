@@ -1,8 +1,8 @@
 [package]
-name = "voice-not"
+name = "freespeak"
 version = "0.1.0"
 edition = "2021"
-description = "Voice Not - push-to-talk dictation for Windows and macOS, transcribed by any OpenAI-compatible API"
+description = "FreeSpeak - push-to-talk dictation for Windows and macOS, transcribed by any OpenAI-compatible API"
 license = "MIT"
 # Declared explicitly: the app, plus the Windows setup stub that carries a copy
 # of the app appended to itself. Without `autobins = false` cargo would also
@@ -10,11 +10,11 @@ license = "MIT"
 autobins = false
 
 [[bin]]
-name = "voice-not"
+name = "freespeak"
 path = "src/main.rs"
 
 [[bin]]
-name = "voice-not-setup"
+name = "freespeak-setup"
 path = "src/bin/setup.rs"
 
 [dependencies]

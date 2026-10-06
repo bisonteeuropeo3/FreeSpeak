@@ -1,4 +1,4 @@
-# Draws the Voice Not icon and writes assets\voice-not.ico plus a preview PNG.
+# Draws the FreeSpeak icon and writes assets\freespeak.ico plus a preview PNG.
 #
 # There is no resource compiler in this toolchain (no windres, no rc.exe), so the
 # icon is drawn here and injected into the built exe by tools\embed-icon.ps1.
@@ -61,7 +61,7 @@ function New-MicPng([int]$size) {
     $stream.Dispose()
 
     if ($size -eq 256) {
-        [System.IO.File]::WriteAllBytes((Join-Path $assets 'voice-not-preview.png'), $bytes)
+        [System.IO.File]::WriteAllBytes((Join-Path $assets 'freespeak-preview.png'), $bytes)
     }
     $bmp.Dispose()
     return , $bytes
@@ -91,7 +91,7 @@ foreach ($size in @(16, 24, 32)) {
     $stream.Dispose()
 }
 $sg.Dispose()
-$sheet.Save((Join-Path $assets 'voice-not-preview-small.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+$sheet.Save((Join-Path $assets 'freespeak-preview-small.png'), [System.Drawing.Imaging.ImageFormat]::Png)
 $sheet.Dispose()
 
 # Assemble the ICO container: header, one directory entry per image, then data.
@@ -117,9 +117,9 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($png in $pngs) { $bw.Write($png) }
 $bw.Flush()
 
-$ico = Join-Path $assets 'voice-not.ico'
+$ico = Join-Path $assets 'freespeak.ico'
 [System.IO.File]::WriteAllBytes($ico, $ms.ToArray())
 $bw.Dispose(); $ms.Dispose()
 
 "wrote $ico ($([math]::Round((Get-Item $ico).Length/1KB,1)) KB)"
-"wrote $(Join-Path $assets 'voice-not-preview.png')"
+"wrote $(Join-Path $assets 'freespeak-preview.png')"

@@ -124,10 +124,12 @@ pub fn run_message_loop<F: FnMut(i32)>(mut on_hotkey: F) {
 
 /// Dialog, for errors that a windowless background instance cannot print.
 ///
-/// `VOICE_NOT_NO_DIALOG=1` suppresses it, which keeps scripted runs from
-/// blocking on a modal box.
+/// `FREESPEAK_NO_DIALOG=1` suppresses it, which keeps scripted runs from
+/// blocking on a modal box. The pre-rename name still works.
 pub fn alert(title: &str, message: &str) {
-    if std::env::var_os("VOICE_NOT_NO_DIALOG").is_some() {
+    if std::env::var_os("FREESPEAK_NO_DIALOG").is_some()
+        || std::env::var_os("VOICE_NOT_NO_DIALOG").is_some()
+    {
         return;
     }
     let title = wide_z(title);
@@ -184,7 +186,7 @@ pub fn install_autostart() -> Result<String, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    Ok(format!("Voice Not will start at every login (HKCU\\...\\Run\\{})", super::APP_NAME))
+    Ok(format!("FreeSpeak will start at every login (HKCU\\...\\Run\\{})", super::APP_NAME))
 }
 
 pub fn uninstall_autostart() -> Result<String, String> {
@@ -206,7 +208,7 @@ pub fn uninstall_autostart() -> Result<String, String> {
 /// it; an error means the lock could not be created at all, which must not be
 /// reported as "already running".
 pub fn single_instance() -> Result<Option<HANDLE>, String> {
-    let name = wide_z("voice-not-single-instance");
+    let name = wide_z("freespeak-single-instance");
     unsafe {
         let handle = CreateMutexW(None, false, PCWSTR(name.as_ptr()))
             .map_err(|e| format!("could not create the single-instance lock: {e}"))?;

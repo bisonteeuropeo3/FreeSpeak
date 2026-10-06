@@ -1,6 +1,6 @@
 //! HTTP transport for the transcription request.
 //!
-//! Each platform uses what it already has, so Voice Not never ships a TLS stack:
+//! Each platform uses what it already has, so FreeSpeak never ships a TLS stack:
 //!
 //! * Windows  - WinHTTP, the OS HTTP client.
 //! * macOS    - `/usr/bin/curl`, which is part of the base system.

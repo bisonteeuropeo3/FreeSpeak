@@ -56,7 +56,7 @@ const K_EVENT_CLASS_KEYBOARD: u32 = 0x6B65_7962; // 'keyb'
 const K_EVENT_HOTKEY_PRESSED: u32 = 5;
 const K_EVENT_PARAM_DIRECT_OBJECT: u32 = 0x2D2D_2D2D; // '----'
 const TYPE_EVENT_HOTKEY_ID: u32 = 0x686B_6964; // 'hkid'
-const HOTKEY_SIGNATURE: u32 = 0x564E_4F54; // 'VNOT'
+const HOTKEY_SIGNATURE: u32 = 0x564E_4F54; // 'FSPK'
 const K_PROCESS_TRANSFORM_TO_BACKGROUND_APPLICATION: u32 = 2;
 
 #[link(name = "Carbon", kind = "framework")]
@@ -376,7 +376,7 @@ pub fn run_message_loop<F: FnMut(i32) + Send + 'static>(callback: F) {
 ///
 /// Both ends are checked because the two uses differ - the API key prompt reads
 /// **stdin**, while everything else writes to stdout - and asking either one on
-/// its own gets the other case wrong. `voice-not | tee log` at a terminal can
+/// its own gets the other case wrong. `freespeak | tee log` at a terminal can
 /// still be typed into; a launchd job has neither and gets a dialog instead.
 pub fn has_console() -> bool {
     unsafe { isatty(0) == 1 || isatty(1) == 1 }
@@ -396,7 +396,9 @@ pub fn read_line() -> Option<String> {
 }
 
 pub fn alert(title: &str, message: &str) {
-    if std::env::var_os("VOICE_NOT_NO_DIALOG").is_some() {
+    if std::env::var_os("FREESPEAK_NO_DIALOG").is_some()
+        || std::env::var_os("VOICE_NOT_NO_DIALOG").is_some()
+    {
         return;
     }
     let script = format!(
@@ -464,7 +466,7 @@ pub fn send_paste() -> Result<(), String> {
             .spawn();
         let me = std::env::current_exe()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|_| "Voice Not".to_string());
+            .unwrap_or_else(|_| "FreeSpeak".to_string());
         return Err(format!(
             "macOS is blocking synthetic keystrokes, so the transcript was copied to the \
              clipboard instead of pasted.\n\nFix it once in System Settings > Privacy & \
@@ -515,7 +517,7 @@ pub struct InstanceGuard(#[allow(dead_code)] std::fs::File);
 pub fn single_instance() -> Result<Option<InstanceGuard>, String> {
     use std::os::unix::io::AsRawFd;
 
-    let path = crate::config::data_dir().join("voice-not.lock");
+    let path = crate::config::data_dir().join("freespeak.lock");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -535,7 +537,7 @@ pub fn single_instance() -> Result<Option<InstanceGuard>, String> {
 
 // ------------------------------------------------------------------ autostart
 
-const LAUNCH_AGENT: &str = "com.voicenot.plist";
+const LAUNCH_AGENT: &str = "com.freespeak.plist";
 
 fn launch_agent_path() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
@@ -573,7 +575,7 @@ pub fn install_autostart() -> Result<String, String> {
 
     load_agent(&path)?;
     Ok(format!(
-        "Voice Not will start at every login ({}), launching {}",
+        "FreeSpeak will start at every login ({}), launching {}",
         path.display(),
         exe.display()
     ))
@@ -582,7 +584,7 @@ pub fn install_autostart() -> Result<String, String> {
 /// The path the login entry should start.
 ///
 /// Running from a `.app` bundle is already permanent and signable, so it is used
-/// as it is. A bare `target/release/voice-not` is not: it disappears with
+/// as it is. A bare `target/release/freespeak` is not: it disappears with
 /// `cargo clean`, which silently killed autostart, so it gets copied next to the
 /// config first.
 fn stable_exe() -> Result<PathBuf, String> {
@@ -592,7 +594,7 @@ fn stable_exe() -> Result<PathBuf, String> {
     }
     let dir = crate::config::data_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    let installed = dir.join("voice-not");
+    let installed = dir.join("freespeak");
     std::fs::copy(&exe, &installed).map_err(|e| {
         format!(
             "could not copy {} to {}: {e}",
@@ -649,7 +651,7 @@ pub fn uninstall_autostart() -> Result<String, String> {
     if !path.exists() {
         // Still try to drop a job whose plist was deleted by hand.
         let _ = Command::new("launchctl")
-            .args(["bootout", &format!("{domain}/com.voicenot")])
+            .args(["bootout", &format!("{domain}/com.freespeak")])
             .output();
         return Ok("there was no login entry to remove".to_string());
     }

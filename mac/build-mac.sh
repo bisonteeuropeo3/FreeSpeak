@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Voice Not on macOS.
+# Builds FreeSpeak on macOS.
 #
 # NeXTSTEP-style bundle, because a bare Mach-O binary cannot do two things this
 # app needs on modern macOS:
@@ -41,7 +41,7 @@ cargo build --release --locked
 target_dir="$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
     | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
 target_dir="${target_dir:-$root/rust/target}"
-binary="$target_dir/release/voice-not"
+binary="$target_dir/release/freespeak"
 
 if [ ! -f "$binary" ]; then
     echo "expected the build at $binary but it is not there" >&2
@@ -49,13 +49,13 @@ if [ ! -f "$binary" ]; then
 fi
 
 version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)"
-app="$root/mac/dist/Voice Not.app"
+app="$root/mac/dist/FreeSpeak.app"
 contents="$app/Contents"
 
 rm -rf "$app"
 mkdir -p "$contents/MacOS" "$contents/Resources"
-cp "$binary" "$contents/MacOS/voice-not"
-chmod +x "$contents/MacOS/voice-not"
+cp "$binary" "$contents/MacOS/freespeak"
+chmod +x "$contents/MacOS/freespeak"
 
 # ---------------------------------------------------------------- Info.plist
 #
@@ -67,13 +67,13 @@ cat > "$contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Voice Not</string>
+    <string>FreeSpeak</string>
     <key>CFBundleDisplayName</key>
-    <string>Voice Not</string>
+    <string>FreeSpeak</string>
     <key>CFBundleIdentifier</key>
-    <string>com.voicenot.dictation</string>
+    <string>com.freespeak.dictation</string>
     <key>CFBundleExecutable</key>
-    <string>voice-not</string>
+    <string>freespeak</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -81,7 +81,7 @@ cat > "$contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key>
     <string>${version:-0.1.0}</string>
     <key>CFBundleIconFile</key>
-    <string>voice-not</string>
+    <string>freespeak</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.15</string>
     <key>LSUIElement</key>
@@ -89,7 +89,7 @@ cat > "$contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Voice Not records while you hold the dictation hotkey, so your speech can be transcribed.</string>
+    <string>FreeSpeak records while you hold the dictation hotkey, so your speech can be transcribed.</string>
 </dict>
 </plist>
 PLIST
@@ -102,9 +102,9 @@ plutil -lint "$contents/Info.plist" >/dev/null
 #
 # iconutil wants an .iconset: the same drawing at the sizes macOS asks for.
 # Optional - a missing icon is cosmetic, a missing plist is not.
-src_icon="$root/windows/assets/voice-not-preview.png"
+src_icon="$root/windows/assets/freespeak-preview.png"
 if [ -f "$src_icon" ] && command -v sips >/dev/null 2>&1; then
-    iconset="$(mktemp -d)/voice-not.iconset"
+    iconset="$(mktemp -d)/freespeak.iconset"
     mkdir -p "$iconset"
     # Only the sizes iconutil expects: an unexpected name makes it reject the
     # whole set, not just that image.
@@ -113,7 +113,7 @@ if [ -f "$src_icon" ] && command -v sips >/dev/null 2>&1; then
         double=$((size * 2))
         sips -z "$double" "$double" "$src_icon" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
     done
-    iconutil -c icns "$iconset" -o "$contents/Resources/voice-not.icns" >/dev/null 2>&1 \
+    iconutil -c icns "$iconset" -o "$contents/Resources/freespeak.icns" >/dev/null 2>&1 \
         || echo "note: could not build the icon, carrying on without it"
     rm -rf "$(dirname "$iconset")"
 fi
@@ -128,7 +128,7 @@ codesign --force --sign - "$app" >/dev/null 2>&1 \
     || echo "note: ad-hoc signing failed; macOS may ask for permissions again after each build"
 
 # The installer the app itself uses must point at the bundle, not at target/.
-"$contents/MacOS/voice-not" --init >/dev/null 2>&1 || true
+"$contents/MacOS/freespeak" --init >/dev/null 2>&1 || true
 
 cat <<EOF
 
@@ -136,17 +136,17 @@ built: $app
        (this is the thing to double-click, and the thing to keep)
 
 Next steps:
-  1. Set your API key:   "$contents/MacOS/voice-not" --set-key
+  1. Set your API key:   "$contents/MacOS/freespeak" --set-key
   2. Grant the microphone when macOS asks, or add the app by hand in
      System Settings > Privacy & Security > Microphone.
-  3. Start at login:     "$contents/MacOS/voice-not" --install-autostart
+  3. Start at login:     "$contents/MacOS/freespeak" --install-autostart
   4. Run it now:         open "$app"
 
 Permissions, once, in System Settings > Privacy & Security:
   * Microphone    - required, or every recording is silence. The bundle carries
                     NSMicrophoneUsageDescription, which is what lets macOS ask.
   * Accessibility - required only for pasting into the focused app (Cmd+V is a
-                    synthetic keystroke). Add "Voice Not.app" with the + button.
+                    synthetic keystroke). Add "FreeSpeak.app" with the + button.
                     Without it the transcript still reaches the clipboard.
   * Hotkeys and the tones need no permission at all.
 

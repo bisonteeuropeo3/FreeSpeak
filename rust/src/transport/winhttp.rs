@@ -41,7 +41,7 @@ pub fn post(
     headers: &[(String, String)],
     body: &[u8],
 ) -> Result<(u16, String), String> {
-    let agent = wide_z(concat!("voice-not/", env!("CARGO_PKG_VERSION")));
+    let agent = wide_z(concat!("freespeak/", env!("CARGO_PKG_VERSION")));
     let host = wide_z(&endpoint.host);
     let verb = wide_z("POST");
     let object = wide_z(&endpoint.object);

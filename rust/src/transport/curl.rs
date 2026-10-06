@@ -14,7 +14,7 @@ impl TempFile {
     fn new(suffix: &str, contents: Option<&[u8]>) -> Result<TempFile, String> {
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "voice-not-{}-{}-{suffix}",
+            "freespeak-{}-{}-{suffix}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

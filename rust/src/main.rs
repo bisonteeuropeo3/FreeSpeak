@@ -1,4 +1,4 @@
-//! Voice Not: push-to-talk dictation for Windows, macOS and Linux.
+//! FreeSpeak: push-to-talk dictation for Windows, macOS and Linux.
 //!
 //! A global hotkey toggles microphone capture. On stop, the recording is sent to
 //! an OpenAI-compatible transcription API, and the transcript is copied to the
@@ -42,12 +42,24 @@ fn main() {
         return;
     }
 
+    // Before anything reads or writes the config: move the settings across from
+    // the folder this app used before it was renamed to FreeSpeak, so an
+    // existing API key keeps working. One-shot, and skipped when there is
+    // nothing to move.
+    let migrated = config::migrate_legacy_data();
     logging::init(&config::log_path());
+    if let Some(old) = migrated {
+        logging::line(&format!(
+            "moved your settings from {} to {} (the old folder can be deleted)",
+            old.display(),
+            config::data_dir().display()
+        ));
+    }
 
     if args.iter().any(|a| a == "--init") {
         let _ = Config::load(); // creates the commented template when missing
         out(&format!("config file: {}", config::config_path().display()));
-        out("add your key with `voice-not --set-key`, or set VOICE_NOT_API_KEY.");
+        out("add your key with `freespeak --set-key`, or set FREESPEAK_API_KEY.");
         return;
     }
 
@@ -129,7 +141,7 @@ fn main() {
             cfg = Config::load();
         } else {
             fatal(&format!(
-                "Voice Not has no API key yet.\n\nRun this in a terminal:\n    voice-not --set-key\n\nor put `api_key = ...` in\n{}",
+                "FreeSpeak has no API key yet.\n\nRun this in a terminal:\n    freespeak --set-key\n\nor put `api_key = ...` in\n{}",
                 config::config_path().display()
             ));
         }
@@ -203,7 +215,7 @@ fn main() {
         // Not the same thing as "already running": the lock file or mutex could
         // not be created at all, which used to be reported as a second instance.
         Err(err) => fatal(&format!(
-            "{err}\n\nVoice Not needs to be able to write to {}",
+            "{err}\n\nFreeSpeak needs to be able to write to {}",
             config::data_dir().display()
         )),
     };
@@ -221,7 +233,7 @@ fn main() {
     match ready_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(Ok(device)) => logging::line(&format!("microphone: {device}")),
         Ok(Err(err)) => fatal(&format!(
-            "Could not open the microphone: {err}\n\nRun `voice-not --devices` in a terminal to list the inputs."
+            "Could not open the microphone: {err}\n\nRun `freespeak --devices` in a terminal to list the inputs."
         )),
         Err(_) => fatal("Timed out opening the microphone."),
     }
@@ -273,7 +285,7 @@ fn main() {
             cfg.quit_hotkey
         ));
     } else {
-        logging::line("running in the background; end the voice-not process to quit.");
+        logging::line("running in the background; end the freespeak process to quit.");
     }
 
     let mut recording = false;
@@ -311,7 +323,7 @@ fn fatal(message: &str) -> ! {
 /// Asks for the API key on the console and saves it into the config file.
 fn prompt_for_key() -> bool {
     out("");
-    out("Voice Not needs an API key for the transcription service.");
+    out("FreeSpeak needs an API key for the transcription service.");
     out("  Groq    keys look like gsk_...  https://console.groq.com/keys");
     out("  OpenAI  keys look like sk-...   https://platform.openai.com/api-keys");
     out("");
@@ -611,10 +623,10 @@ fn finish(cfg: &Config, wav: Vec<u8>, tones: &Tones) {
 
 fn print_help() {
     out(
-        "Voice Not - push-to-talk dictation, transcribed by any OpenAI-compatible API
+        "FreeSpeak - push-to-talk dictation, transcribed by any OpenAI-compatible API
 
 USAGE:
-    voice-not [OPTIONS]
+    freespeak [OPTIONS]
 
 Press the hotkey (default ctrl+alt+space) to start recording, press it again to
 stop. The transcript is copied to the clipboard and pasted into the focused
@@ -646,12 +658,12 @@ OPTIONS:
     --uninstall-autostart      stop starting at login
     -h, --help          show this help
 
-The API key is read from VOICE_NOT_API_KEY, GROQ_API_KEY or OPENAI_API_KEY, or
+The API key is read from FREESPEAK_API_KEY, GROQ_API_KEY or OPENAI_API_KEY, or
 from `api_key = ...` in the config file. Run the tool once to create the config.
 
 Config and logs live in:
-    Windows  %LOCALAPPDATA%\\voice-not\\
-    macOS    ~/Library/Application Support/voice-not/
-    Linux    ~/.config/voice-not/"
+    Windows  %LOCALAPPDATA%\\freespeak\\
+    macOS    ~/Library/Application Support/freespeak/
+    Linux    ~/.config/freespeak/"
     );
 }
