@@ -1,0 +1,11 @@
+# Build output: rebuilt by windows/build.ps1 and mac/build-mac.sh.
+rust/target/
+mac/dist/
+
+# Your own data never belongs in here: the API key lives in the config file
+# under %LOCALAPPDATA%\voice-not (Windows) or
+# ~/Library/Application Support/voice-not (macOS), outside this folder.
+*.log
+
+# The Windows installer IS committed on purpose, so a clone can be installed
+# without a toolchain: windows/dist/VoiceNotSetup.exe

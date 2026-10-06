@@ -1,0 +1,48 @@
+[package]
+name = "voice-not"
+version = "0.1.0"
+edition = "2021"
+description = "Voice Not - push-to-talk dictation for Windows and macOS, transcribed by any OpenAI-compatible API"
+license = "MIT"
+# Declared explicitly: the app, plus the Windows setup stub that carries a copy
+# of the app appended to itself. Without `autobins = false` cargo would also
+# build the stub a second time as `setup.exe`.
+autobins = false
+
+[[bin]]
+name = "voice-not"
+path = "src/main.rs"
+
+[[bin]]
+name = "voice-not-setup"
+path = "src/bin/setup.rs"
+
+[dependencies]
+# Windows audio capture (WASAPI) - pure Rust, no C compiler required.
+cpal = "0.15"
+# Only the response is parsed, so serde itself is not needed.
+serde_json = "1"
+# Clipboard access, per platform. The default "image-data" feature would pull in
+# a full image codec stack for a feature this tool never uses.
+arboard = { version = "3", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# Hotkeys, synthetic Ctrl+V, dialogs, and the WinHTTP client.
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinHttp",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
