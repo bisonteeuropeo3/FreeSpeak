@@ -1,21 +1,40 @@
 //! Windows backend.
 
-use super::{Hotkey, MOD_ALT, MOD_CTRL, MOD_META, MOD_SHIFT};
+use super::{Hotkey, SettingsInput, MOD_ALT, MOD_CTRL, MOD_META, MOD_SHIFT};
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, ERROR_ALREADY_EXISTS};
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
+    ERROR_ALREADY_EXISTS,
+};
+use windows::Win32::Graphics::Gdi::{
+    GetStockObject, SetBkMode, COLOR_BTNFACE, DEFAULT_GUI_FONT, HBRUSH, HDC, TRANSPARENT,
+};
 use windows::Win32::System::Console::{AttachConsole, GetConsoleWindow, ATTACH_PARENT_PROCESS};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::Controls::{BST_CHECKED, BST_UNCHECKED};
+use windows::Win32::UI::HiDpi::{
+    GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, RegisterHotKey, SendInput, HOT_KEY_MODIFIERS, INPUT, INPUT_0, INPUT_KEYBOARD,
-    KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOD_ALT as WIN_MOD_ALT,
+    GetAsyncKeyState, RegisterHotKey, SendInput, SetFocus, HOT_KEY_MODIFIERS, INPUT, INPUT_0,
+    INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOD_ALT as WIN_MOD_ALT,
     MOD_CONTROL as WIN_MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT as WIN_MOD_SHIFT,
     MOD_WIN as WIN_MOD_WIN, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetMessageW, MessageBoxW, MB_ICONERROR, MB_OK, MSG, WM_HOTKEY,
+    AdjustWindowRect, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetDlgItem,
+    GetMessageW, GetSystemMetrics, GetWindowTextLengthW, GetWindowTextW, IsDialogMessageW,
+    LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow,
+    ShowWindow, TranslateMessage, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON,
+    CS_HREDRAW, CS_VREDRAW, ES_AUTOHSCROLL, HMENU, IDC_ARROW, MB_ICONERROR, MB_OK, MSG,
+    SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_HOTKEY, WM_SETFONT, WNDCLASSW, WS_CAPTION, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_EX_CONTROLPARENT, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 
 /// UTF-16 with a terminating NUL.
@@ -204,10 +223,26 @@ pub fn uninstall_autostart() -> Result<String, String> {
     Ok("removed the login entry".to_string())
 }
 
+/// The single-instance lock, released when this value is dropped.
+///
+/// A plain `HANDLE` is `Copy`, so `drop(guard)` would not have closed anything
+/// and the lock would have stayed held for the life of the process - which is
+/// exactly wrong for the settings window, whose job includes *releasing* the lock
+/// so a background copy can take it.
+pub struct InstanceGuard(HANDLE);
+
+impl Drop for InstanceGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
 /// Claims the single-instance lock. `Ok(None)` means another copy already holds
 /// it; an error means the lock could not be created at all, which must not be
 /// reported as "already running".
-pub fn single_instance() -> Result<Option<HANDLE>, String> {
+pub fn single_instance() -> Result<Option<InstanceGuard>, String> {
     let name = wide_z("freespeak-single-instance");
     unsafe {
         let handle = CreateMutexW(None, false, PCWSTR(name.as_ptr()))
@@ -217,7 +252,7 @@ pub fn single_instance() -> Result<Option<HANDLE>, String> {
             let _ = CloseHandle(handle);
             return Ok(None);
         }
-        Ok(Some(handle))
+        Ok(Some(InstanceGuard(handle)))
     }
 }
 
@@ -293,6 +328,306 @@ pub fn send_paste() -> Result<(), String> {
         return Err("SendInput was refused; the focused window may be running elevated".to_string());
     }
     Ok(())
+}
+
+// ------------------------------------------------------------- settings window
+//
+// A real window with two controls, built from raw Win32 rather than a GUI
+// toolkit: eframe/egui would add megabytes to a 570 KB binary, and the whole
+// point of this app is that it is invisible and weightless until you ask for it.
+//
+// It runs in its own short-lived process, which is what makes the rest simple:
+// no IPC with the background instance is needed, because the daemon re-reads the
+// config file on every hotkey press.
+
+/// Control ids. The two buttons double as the ids the dialog manager uses for
+/// Enter (default button) and Esc (cancel).
+const ID_KEY: i32 = 100;
+const ID_SOUND: i32 = 101;
+const ID_SAVE: i32 = 1;
+const ID_CANCEL: i32 = 2;
+
+/// `EM_SETSEL`: selects a range in an edit control.
+const EM_SETSEL: u32 = 0x00b1;
+
+/// Written by the window procedure, read after the message loop ends.
+#[derive(Default)]
+struct Outcome {
+    saved: bool,
+    api_key: String,
+    beep: bool,
+}
+
+static OUTCOME: OnceLock<Mutex<Outcome>> = OnceLock::new();
+
+fn outcome() -> &'static Mutex<Outcome> {
+    OUTCOME.get_or_init(|| Mutex::new(Outcome::default()))
+}
+
+fn window_text(hwnd: HWND) -> String {
+    unsafe {
+        let length = GetWindowTextLengthW(hwnd);
+        if length <= 0 {
+            return String::new();
+        }
+        let mut buffer = vec![0u16; length as usize + 1];
+        let copied = GetWindowTextW(hwnd, &mut buffer);
+        let copied = copied.clamp(0, buffer.len() as i32) as usize;
+        String::from_utf16_lossy(&buffer[..copied])
+    }
+}
+
+unsafe extern "system" fn settings_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_COMMAND => {
+            match (wparam.0 & 0xffff) as i32 {
+                ID_SAVE => {
+                    let key = GetDlgItem(hwnd, ID_KEY).unwrap_or_default();
+                    let sound = GetDlgItem(hwnd, ID_SOUND).unwrap_or_default();
+                    let checked =
+                        SendMessageW(sound, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 as u32
+                            == BST_CHECKED.0;
+                    if let Ok(mut outcome) = outcome().lock() {
+                        outcome.saved = true;
+                        outcome.api_key = window_text(key);
+                        outcome.beep = checked;
+                    }
+                    let _ = DestroyWindow(hwnd);
+                }
+                ID_CANCEL => {
+                    let _ = DestroyWindow(hwnd);
+                }
+                _ => {}
+            }
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        // Static controls otherwise paint their own grey rectangle over the
+        // window background, which is what makes hand-built Win32 dialogs look
+        // broken. Transparent text over the parent's own brush fixes it.
+        WM_CTLCOLORSTATIC => {
+            let hdc = HDC(wparam.0 as *mut core::ffi::c_void);
+            SetBkMode(hdc, TRANSPARENT);
+            LRESULT((COLOR_BTNFACE.0 + 1) as isize)
+        }
+        _ => DefWindowProcW(hwnd, message, wparam, lparam),
+    }
+}
+
+/// Shows the settings window and waits for it to close.
+///
+/// `Ok(None)` means the user cancelled, which is not an error.
+pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, String> {
+    unsafe {
+        // Crisp text on scaled displays. Without this, Windows bitmap-stretches
+        // the whole window and it looks broken at 125% and 150%.
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let dpi = GetDpiForSystem().max(96) as i32;
+        let scale = |value: i32| value * dpi / 96;
+
+        if let Ok(mut outcome) = outcome().lock() {
+            *outcome = Outcome::default();
+        }
+
+        let instance = GetModuleHandleW(None)
+            .map_err(|e| format!("could not reach this program's module handle: {e}"))?;
+
+        let class_name = wide_z("FreeSpeakSettings");
+        let window_class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(settings_proc),
+            hInstance: HINSTANCE(instance.0),
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            // The classic dialog face, which is what the buttons and the
+            // checkbox paint themselves with: matching it makes them blend
+            // instead of sitting on differently coloured rectangles.
+            hbrBackground: HBRUSH((COLOR_BTNFACE.0 + 1) as *mut core::ffi::c_void),
+            lpszClassName: PCWSTR(class_name.as_ptr()),
+            ..Default::default()
+        };
+        // A second call in the same process fails with "class exists"; the class
+        // is already registered and usable either way.
+        RegisterClassW(&window_class);
+
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+        let mut client = RECT {
+            left: 0,
+            top: 0,
+            right: scale(470),
+            bottom: scale(158),
+        };
+        let _ = AdjustWindowRect(&mut client, style, false);
+        let (width, height) = (client.right - client.left, client.bottom - client.top);
+        let x = ((GetSystemMetrics(SM_CXSCREEN) - width).max(0)) / 2;
+        let y = ((GetSystemMetrics(SM_CYSCREEN) - height).max(0)) / 2;
+
+        let title = wide_z("FreeSpeak settings");
+        let hwnd = CreateWindowExW(
+            // CONTROLPARENT is what lets the dialog manager walk the controls.
+            WS_EX_CONTROLPARENT,
+            PCWSTR(class_name.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            style,
+            x,
+            y,
+            width,
+            height,
+            HWND::default(),
+            HMENU::default(),
+            instance,
+            None,
+        )
+        .map_err(|e| format!("could not open the settings window: {e}"))?;
+
+        let font = GetStockObject(DEFAULT_GUI_FONT);
+        let child = |kind: &str,
+                     text: &str,
+                     style: WINDOW_STYLE,
+                     extra: WINDOW_EX_STYLE,
+                     left: i32,
+                     top: i32,
+                     wide: i32,
+                     high: i32,
+                     id: i32|
+         -> Result<HWND, String> {
+            let kind = wide_z(kind);
+            let text = wide_z(text);
+            let child = CreateWindowExW(
+                extra,
+                PCWSTR(kind.as_ptr()),
+                PCWSTR(text.as_ptr()),
+                WS_CHILD | WS_VISIBLE | style,
+                scale(left),
+                scale(top),
+                scale(wide),
+                scale(high),
+                hwnd,
+                HMENU(id as *mut core::ffi::c_void),
+                instance,
+                None,
+            )
+            .map_err(|e| format!("could not build the settings window: {e}"))?;
+            SendMessageW(child, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(1));
+            Ok(child)
+        };
+
+        child(
+            "STATIC",
+            "API key",
+            WINDOW_STYLE(0),
+            WINDOW_EX_STYLE(0),
+            16,
+            21,
+            90,
+            20,
+            0,
+        )?;
+        let edit = child(
+            "EDIT",
+            &current.api_key,
+            WINDOW_STYLE(ES_AUTOHSCROLL as u32 | WS_TABSTOP.0),
+            WS_EX_CLIENTEDGE,
+            112,
+            16,
+            340,
+            24,
+            ID_KEY,
+        )?;
+        child(
+            "BUTTON",
+            "Play a sound when recording starts and stops",
+            WINDOW_STYLE(BS_AUTOCHECKBOX as u32 | WS_TABSTOP.0),
+            WINDOW_EX_STYLE(0),
+            16,
+            58,
+            430,
+            22,
+            ID_SOUND,
+        )?;
+        child(
+            "STATIC",
+            "Hotkey, language, provider and the tones live in the config file.",
+            WINDOW_STYLE(0),
+            WINDOW_EX_STYLE(0),
+            16,
+            90,
+            430,
+            20,
+            0,
+        )?;
+        child(
+            "BUTTON",
+            "Save",
+            WINDOW_STYLE(BS_DEFPUSHBUTTON as u32 | WS_TABSTOP.0),
+            WINDOW_EX_STYLE(0),
+            336,
+            118,
+            100,
+            28,
+            ID_SAVE,
+        )?;
+        child(
+            "BUTTON",
+            "Cancel",
+            WINDOW_STYLE(WS_TABSTOP.0),
+            WINDOW_EX_STYLE(0),
+            244,
+            118,
+            84,
+            28,
+            ID_CANCEL,
+        )?;
+
+        let sound = GetDlgItem(hwnd, ID_SOUND).unwrap_or_default();
+        let state = if current.beep {
+            BST_CHECKED
+        } else {
+            BST_UNCHECKED
+        };
+        SendMessageW(sound, BM_SETCHECK, WPARAM(state.0 as usize), LPARAM(0));
+
+        // Start in the key field with the old key selected: replacing it is then
+        // one paste.
+        let _ = SetFocus(edit);
+        SendMessageW(edit, EM_SETSEL, WPARAM(0), LPARAM(-1));
+
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(hwnd);
+
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).as_bool() {
+            // Real dialog behaviour: Tab between the controls, Enter saves, Esc
+            // cancels.
+            if !IsDialogMessageW(hwnd, &message).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+
+        let outcome = outcome()
+            .lock()
+            .map_err(|_| "the settings window could not report what you chose".to_string())?;
+        if outcome.saved {
+            Ok(Some(SettingsInput {
+                api_key: outcome.api_key.trim().to_string(),
+                beep: outcome.beep,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -35,7 +35,12 @@ use std::time::{Duration, Instant};
 
 /// Peak amplitude of the loudest tone, well below full scale so the tones are
 /// not startling. Overridable with `tone_volume`.
-pub const DEFAULT_VOLUME: f32 = 0.22;
+///
+/// The rendered samples already carry this (times a per-event gain), so the audio
+/// callback does not scale them again: doing it in both places squared the
+/// setting, which made `tone_volume = 0.22` come out at 0.048 and left no way to
+/// reason about the number.
+pub const DEFAULT_VOLUME: f32 = 0.08;
 
 /// Longest we wait for the audio callback to take the samples before giving up
 /// on the tone. Generous on purpose: a cold Windows endpoint can take most of a
@@ -208,13 +213,15 @@ pub fn parse_notes(value: &str) -> Option<Vec<(f32, f32)>> {
 #[derive(Clone)]
 pub struct Tones {
     tx: Sender<Message>,
-    settings: Settings,
+    settings: Arc<Mutex<Settings>>,
 }
 
 enum Message {
     Play(Kind),
     /// Ordering fence: answered once every earlier tone has finished playing.
     Barrier(Sender<()>),
+    /// The settings changed; the next cue reads them again.
+    Reload,
 }
 
 impl Tones {
@@ -225,9 +232,40 @@ impl Tones {
     /// instead of on the user's first hotkey press.
     pub fn start(settings: Settings) -> Tones {
         let (tx, rx) = channel();
-        let worker_settings = settings.clone();
+        let shared = Arc::new(Mutex::new(settings));
+        let worker_settings = shared.clone();
         std::thread::spawn(move || worker(rx, worker_settings));
-        Tones { tx, settings }
+        Tones { tx, settings: shared }
+    }
+
+    /// Applies settings that changed while the app was running - the settings
+    /// window writes the config file, and the daemon hands the new values here -
+    /// so silencing the cues takes effect on the very next keypress.
+    ///
+    /// Returns whether this flipped the sound on or off, which the caller logs:
+    /// it is the one setting people change from the window, and "did it take
+    /// effect?" should be answerable from the log rather than by pressing the
+    /// hotkey and listening.
+    pub fn set_settings(&self, settings: Settings) -> bool {
+        let changed = self.current().enabled != settings.enabled;
+        if let Ok(mut current) = self.settings.lock() {
+            *current = settings;
+        }
+        let _ = self.tx.send(Message::Reload);
+        changed
+    }
+
+    fn current(&self) -> Settings {
+        self.settings
+            .lock()
+            .map(|settings| settings.clone())
+            .unwrap_or_default()
+    }
+
+    /// Whether this event makes a sound at all.
+    pub fn plays(&self, kind: Kind) -> bool {
+        let settings = self.current();
+        settings.enabled && settings.notes(kind).is_some()
     }
 
     /// Queues a tone. Never blocks: the caller is the dictation path.
@@ -236,11 +274,6 @@ impl Tones {
             return;
         }
         let _ = self.tx.send(Message::Play(kind));
-    }
-
-    /// Whether this event makes a sound at all.
-    pub fn plays(&self, kind: Kind) -> bool {
-        self.settings.enabled && self.settings.notes(kind).is_some()
     }
 
     /// Waits until the playback thread has opened and primed the output device,
@@ -274,9 +307,9 @@ impl Tones {
 
 /// Owns the output stream, so it lives on this thread (cpal streams are not
 /// `Send` on every backend).
-fn worker(rx: Receiver<Message>, settings: Settings) {
+fn worker(rx: Receiver<Message>, settings: Arc<Mutex<Settings>>) {
     let shared = Arc::new(Shared::default());
-    let player = match Player::new(shared, &settings) {
+    let player = match Player::new(shared) {
         Ok(player) => player,
         Err(err) => {
             crate::logging::line(&format!(
@@ -288,6 +321,7 @@ fn worker(rx: Receiver<Message>, settings: Settings) {
                     Message::Barrier(done) => {
                         let _ = done.send(());
                     }
+                    Message::Reload => {}
                 }
             }
             return;
@@ -309,6 +343,12 @@ fn worker(rx: Receiver<Message>, settings: Settings) {
     while let Ok(message) = rx.recv() {
         match message {
             Message::Play(kind) => {
+                // Read per cue, so a change made in the settings window applies
+                // to the next keypress rather than the next restart.
+                let settings = settings
+                    .lock()
+                    .map(|settings| settings.clone())
+                    .unwrap_or_default();
                 let samples = render(kind, &settings, player.sample_rate, player.channels);
                 if samples.is_empty() {
                     continue; // this event is configured silent
@@ -339,6 +379,8 @@ fn worker(rx: Receiver<Message>, settings: Settings) {
             Message::Barrier(done) => {
                 let _ = done.send(());
             }
+            // Nothing to do: the next cue reads the new settings itself.
+            Message::Reload => {}
         }
     }
 }
@@ -377,7 +419,7 @@ impl Emit {
 }
 
 impl Player {
-    fn new(shared: Arc<Shared>, settings: &Settings) -> Result<Player, String> {
+    fn new(shared: Arc<Shared>) -> Result<Player, String> {
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -393,7 +435,6 @@ impl Player {
         let on_error = |err: cpal::StreamError| {
             crate::logging::line(&format!("audio output error: {err}"));
         };
-        let volume = settings.volume.clamp(0.0, 1.0);
 
         macro_rules! build {
             ($sample:ty, $from:expr) => {{
@@ -417,8 +458,10 @@ impl Player {
                             Ok(mut queue) => {
                                 for sample in data.iter_mut() {
                                     match queue.pop_front() {
+                                        // Already scaled by the renderer, which
+                                        // knows this event's own gain.
                                         Some(value) => {
-                                            *sample = convert(value * volume);
+                                            *sample = convert(value);
                                             handed_over += 1;
                                         }
                                         None => *sample = convert(0.0),

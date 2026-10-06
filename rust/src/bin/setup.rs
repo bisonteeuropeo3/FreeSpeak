@@ -372,11 +372,13 @@ mod installer {
         let _ = Command::new(&target).arg("--install-autostart").output();
 
         let programs = start_menu();
+        // The Start-menu entry opens the settings, which is the only window this
+        // app has; the background copy is started by the login entry.
         let _ = create_shortcut(
             &programs.join("FreeSpeak.lnk"),
             &target,
-            "",
-            "FreeSpeak - push-to-talk dictation",
+            "--settings",
+            "FreeSpeak settings - API key and sound",
         );
         let _ = create_shortcut(
             &programs.join("Uninstall FreeSpeak.lnk"),

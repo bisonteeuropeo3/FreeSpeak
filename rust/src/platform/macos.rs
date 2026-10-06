@@ -10,8 +10,8 @@
 //! * Alerts go through `osascript`, which needs no extra permissions.
 
 use super::{
-    applescript_string, inside_app_bundle, launch_agent_plist, Hotkey, MOD_ALT, MOD_CTRL, MOD_META,
-    MOD_SHIFT,
+    applescript_string, inside_app_bundle, launch_agent_plist, Hotkey, SettingsInput, MOD_ALT,
+    MOD_CTRL, MOD_META, MOD_SHIFT,
 };
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -506,6 +506,73 @@ pub fn send_paste() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// ------------------------------------------------------------------ settings
+//
+// Two `osascript` dialogs rather than a Cocoa window. A real one means several
+// hundred lines of Objective-C runtime calls, and unlike the rest of this file it
+// cannot be type-checked anywhere but a Mac: a mistake is a crash, not a bad
+// dialog. The dialogs are native, modal and keyboard-driven, which is what the
+// two settings actually need.
+
+fn run_osascript(script: &str) -> Result<Option<String>, String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("could not run osascript: {e}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        // Cancelling makes osascript exit non-zero; that is a choice, not a fault.
+        if stderr.contains("User canceled") || stderr.contains("User cancelled") {
+            return Ok(None);
+        }
+        return Err(format!("osascript said: {}", stderr.trim()));
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+}
+
+/// Pulls `field:value` out of osascript's `button returned:Save, text returned:x`.
+fn osascript_field(reply: &str, field: &str) -> Option<String> {
+    let needle = format!("{field}:");
+    let start = reply.find(&needle)? + needle.len();
+    let rest = &reply[start..];
+    let end = rest.find(", ").unwrap_or(rest.len());
+    Some(rest[..end].trim().to_string())
+}
+
+/// Shows the settings and waits for them, `Ok(None)` when cancelled.
+pub fn show_settings(current: &crate::Config) -> Result<Option<SettingsInput>, String> {
+    let key_script = format!(
+        "display dialog \"The API key FreeSpeak uses to transcribe.\" \
+         with title \"FreeSpeak settings\" default answer {} \
+         buttons {{\"Cancel\", \"Next\"}} default button \"Next\" with hidden answer",
+        applescript_string(&current.api_key)
+    );
+    let reply = match run_osascript(&key_script)? {
+        Some(reply) => reply,
+        None => return Ok(None),
+    };
+    let api_key = osascript_field(&reply, "text returned").unwrap_or_default();
+    if api_key.trim().is_empty() {
+        return Err("the API key cannot be empty: without it nothing can be transcribed".to_string());
+    }
+
+    let default = if current.beep { "Sound" } else { "Silent" };
+    let sound_script = format!(
+        "display dialog \"Play a sound when recording starts and stops?\" \
+         with title \"FreeSpeak settings\" buttons {{\"Silent\", \"Sound\"}} default button \"{default}\""
+    );
+    let reply = match run_osascript(&sound_script)? {
+        Some(reply) => reply,
+        None => return Ok(None),
+    };
+    let beep = osascript_field(&reply, "button returned")
+        .map(|button| button == "Sound")
+        .unwrap_or(current.beep);
+
+    Ok(Some(SettingsInput { api_key, beep }))
 }
 
 // ----------------------------------------------------------- single instance

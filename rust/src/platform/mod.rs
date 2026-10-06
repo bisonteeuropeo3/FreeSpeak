@@ -26,6 +26,16 @@ compile_error!(
 
 pub const APP_NAME: &str = "FreeSpeak";
 
+/// What the settings window collects.
+///
+/// Kept to the two things worth a control. Everything else in the config file is
+/// either set once (hotkey, device, provider) or a matter of taste that the file
+/// documents better than a dialog could.
+pub struct SettingsInput {
+    pub api_key: String,
+    pub beep: bool,
+}
+
 pub const HOTKEY_TOGGLE: i32 = 1;
 pub const HOTKEY_QUIT: i32 = 2;
 

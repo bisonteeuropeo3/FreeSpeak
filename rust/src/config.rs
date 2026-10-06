@@ -2,7 +2,7 @@
 //! per-OS locations for config and logs.
 
 use crate::tone::Tone;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Environment variables checked for the API key, in order. The pre-rename name
 /// still works, so an environment that was set up before keeps working.
@@ -498,30 +498,73 @@ pub fn save_api_key(key: &str) -> Result<PathBuf, String> {
         return Err("the key is empty".to_string());
     }
     let path = config_path();
+    write_settings_to(&path, &[("api_key", key)])?;
+    Ok(path)
+}
+
+/// What the settings window changes.
+pub fn save_settings(key: &str, beep: bool) -> Result<PathBuf, String> {
+    let key = sanitize_key(key);
+    if key.is_empty() {
+        return Err(
+            "the API key cannot be empty: without it nothing can be transcribed".to_string(),
+        );
+    }
+    let path = config_path();
+    write_settings_to(
+        &path,
+        &[
+            ("api_key", key),
+            ("beep", if beep { "true" } else { "false" }.to_string()),
+        ],
+    )?;
+    Ok(path)
+}
+
+/// Rewrites `name = value` lines in place and appends the ones that are missing.
+///
+/// Everything else in the file survives untouched, comments included: most
+/// options (hotkey, device, tones, provider) are only editable there, so the
+/// settings window must not flatten the file it edits.
+fn write_settings_to(path: &Path, updates: &[(&str, String)]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
-    let existing = std::fs::read_to_string(&path).unwrap_or_else(|_| TEMPLATE.to_string());
+    let existing = std::fs::read_to_string(path).unwrap_or_else(|_| TEMPLATE.to_string());
 
-    let mut out = String::with_capacity(existing.len() + key.len() + 16);
-    let mut replaced = false;
+    let mut out = String::with_capacity(existing.len() + 64);
+    let mut written: Vec<&str> = Vec::new();
     for line in existing.lines() {
         let trimmed = line.trim_start();
-        if !trimmed.starts_with('#') && trimmed.starts_with("api_key") && trimmed.contains('=') {
-            out.push_str(&format!("api_key = {key}\n"));
-            replaced = true;
+        let name = if trimmed.starts_with('#') || !trimmed.contains('=') {
+            ""
         } else {
-            out.push_str(line);
-            out.push('\n');
+            trimmed.split_once('=').map(|(k, _)| k.trim()).unwrap_or("")
+        };
+        match updates
+            .iter()
+            .find(|(update, _)| update.eq_ignore_ascii_case(name))
+        {
+            Some((update, value)) => {
+                // Keep the file's own spelling of the key and its indentation.
+                let indent = &line[..line.len() - trimmed.len()];
+                out.push_str(&format!("{indent}{update} = {value}\n"));
+                written.push(update);
+            }
+            None => {
+                out.push_str(line);
+                out.push('\n');
+            }
         }
     }
-    if !replaced {
-        out.push_str(&format!("api_key = {key}\n"));
+    for (update, value) in updates {
+        if !written.iter().any(|name| name.eq_ignore_ascii_case(update)) {
+            out.push_str(&format!("{update} = {value}\n"));
+        }
     }
 
-    std::fs::write(&path, out).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    Ok(path)
+    std::fs::write(path, out).map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
 #[cfg(test)]
@@ -592,5 +635,76 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(local.endpoint(), "http://localhost:8080/v1/audio/transcriptions");
+    }
+
+    fn temp_config(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "freespeak-config-test-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("config")
+    }
+
+    /// The settings window edits two values in a file full of commented options.
+    /// Losing the rest of it would be the expensive kind of bug.
+    #[test]
+    fn saving_settings_rewrites_only_its_own_keys() {
+        let path = temp_config("rewrite");
+        std::fs::write(
+            &path,
+            "# a comment\napi_key = gsk_old\nhotkey = ctrl+shift+d\nbeep = true\n",
+        )
+        .unwrap();
+
+        write_settings_to(
+            &path,
+            &[("api_key", "gsk_new".into()), ("beep", "false".into())],
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("api_key = gsk_new"), "{text}");
+        assert!(text.contains("beep = false"), "{text}");
+        assert!(text.contains("hotkey = ctrl+shift+d"), "lost a setting: {text}");
+        assert!(text.contains("# a comment"), "lost a comment: {text}");
+        assert!(!text.contains("gsk_old"), "{text}");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_missing_file_starts_from_the_template_and_missing_keys_are_appended() {
+        let fresh = temp_config("fresh");
+        let _ = std::fs::remove_file(&fresh);
+        write_settings_to(&fresh, &[("api_key", "gsk_fresh".into())]).unwrap();
+        let text = std::fs::read_to_string(&fresh).unwrap();
+        assert!(text.contains("api_key = gsk_fresh"), "{text}");
+        assert!(
+            text.contains("# FreeSpeak configuration"),
+            "the commented template should be reused, not replaced by one line: {text}"
+        );
+
+        let partial = temp_config("partial");
+        std::fs::write(&partial, "hotkey = f9\n").unwrap();
+        write_settings_to(
+            &partial,
+            &[("api_key", "gsk_two".into()), ("beep", "false".into())],
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&partial).unwrap();
+        assert!(text.contains("hotkey = f9"), "{text}");
+        assert!(text.contains("api_key = gsk_two"), "{text}");
+        assert!(text.contains("beep = false"), "{text}");
+
+        let _ = std::fs::remove_dir_all(fresh.parent().unwrap());
+        let _ = std::fs::remove_dir_all(partial.parent().unwrap());
+    }
+
+    #[test]
+    fn an_empty_key_is_refused_before_anything_is_written() {
+        // These never touch the real config: the check comes before the write.
+        assert!(save_settings("", true).is_err());
+        assert!(save_settings("   ", false).is_err());
+        assert!(save_api_key("\u{feff}  ").is_err());
     }
 }

@@ -21,6 +21,7 @@ nothing to close. It starts itself at login and waits quietly for the hotkey.
 | Microphone permission | ✅ granted at install | ⚠️ **required** since 10.14 — the `.app` carries `NSMicrophoneUsageDescription`; a bare binary cannot ask | ❌ |
 | Paste keystroke | ✅ `SendInput` Ctrl+V | ✅ `CGEvent` Cmd+V (**needs Accessibility, added by hand**) | ❌ |
 | Autostart at login | ✅ per-user Run key | ✅ LaunchAgent in `~/Library/LaunchAgents` | ❌ |
+| Settings window | ✅ native Win32, two controls | ⚠️ two `osascript` dialogs — see below | ❌ |
 | Windowless | ✅ windowless subsystem | ✅ background-only process, no Dock icon | — |
 
 > **Honesty note:** the macOS backend was written and reviewed on Windows, where
@@ -75,6 +76,27 @@ stays on your clipboard.
 **To stop it:** press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd>,
 or end the `freespeak` process in Task Manager / Activity Monitor. Starting it
 twice is harmless: the second copy notices the first and exits.
+
+## Settings
+
+Click **FreeSpeak** in the Start menu — or double-click the app while it is
+already running — and one small window opens with the two things worth a control:
+
+![the FreeSpeak settings window](windows/assets/settings-window.png)
+
+* **API key** — saved straight into the config file. Saving an empty key is
+  refused, because nothing can be transcribed without one.
+* **Play a sound when recording starts and stops** — the on/off switch for every
+  cue. The individual tones and their volume stay in the config file.
+
+Changes reach the copy that is already running on the **next keypress**: the
+background app re-reads the config file every time you use the hotkey, so there is
+nothing to restart and nothing to quit. That also means editing the config by hand
+works just as well, and `freespeak --settings` opens the same window from a
+terminal.
+
+This is the only window the app has, and it exists only while it is open — the
+background copy never shows anything, and closing the window does not stop it.
 
 ## Any OpenAI-compatible provider
 
@@ -132,7 +154,7 @@ MIT licensed, one Rust crate, no runtime to install.
 Run `windows\dist\FreeSpeakSetup.exe`. That is the whole install: it copies the
 app to `%LOCALAPPDATA%\Programs\freespeak`, registers the login entry, adds
 **FreeSpeak** and **Uninstall FreeSpeak** to the Start menu, and then offers to
-set your API key and start it.
+set your API key and start it. The Start-menu entry opens the settings window.
 
 To remove it, use **Uninstall FreeSpeak** in the Start menu, or run
 `uninstall.exe --uninstall` from the install folder. Your config, key and logs
@@ -205,7 +227,8 @@ transport = auto                  ; auto, winhttp (Windows) or curl
 ### Command line
 
 ```
-freespeak --set-key            ask for the API key and save it
+freespeak --settings           open the settings window (key, sound on/off)
+freespeak --set-key            ask for the API key in the terminal and save it
 freespeak --devices            list input devices
 freespeak --init               create the config file
 freespeak --install-autostart  start at login

@@ -119,6 +119,13 @@ fn main() {
         return;
     }
 
+    // `--settings`: the window the Start-menu entry opens. It runs before the
+    // API key check on purpose - setting a key is the whole point of it.
+    if args.iter().any(|a| a == "--settings") {
+        show_settings(&cfg, true);
+        return;
+    }
+
     logging::line(&format!(
         "{} {} starting",
         env!("CARGO_PKG_NAME"),
@@ -209,7 +216,11 @@ fn main() {
     let _instance = match platform::single_instance() {
         Ok(Some(guard)) => guard,
         Ok(None) => {
-            logging::line("another instance is already running; exiting");
+            // Already running in the background, so the useful thing a second
+            // launch can do is open its settings. That is what double-clicking
+            // the app does while it is running.
+            logging::line("FreeSpeak is already running; opening its settings");
+            show_settings(&cfg, false);
             return;
         }
         // Not the same thing as "already running": the lock file or mutex could
@@ -510,6 +521,68 @@ fn test_tones(cfg: &Config, idle_seconds: u64) {
     out("done - if you heard all of the cues above, the audio path is healthy.");
 }
 
+/// Opens the settings window and saves whatever came back.
+///
+/// `ensure_running` starts a background copy first when none is running: the
+/// window exists to configure the app, not to leave the user with nothing
+/// running once they close it.
+fn show_settings(cfg: &Config, ensure_running: bool) {
+    if ensure_running {
+        start_background_copy();
+    }
+    match platform::show_settings(cfg) {
+        Ok(Some(chosen)) => match config::save_settings(&chosen.api_key, chosen.beep) {
+            Ok(path) => logging::line(&format!(
+                "settings saved to {} (a running FreeSpeak picks them up on the next keypress)",
+                path.display()
+            )),
+            Err(err) => {
+                // The dialog is what the user sees; the log is what they can
+                // send when the dialog was suppressed or missed.
+                logging::line(&format!("settings not saved: {err}"));
+                platform::alert(platform::APP_NAME, &err);
+            }
+        },
+        Ok(None) => logging::line("settings closed without changes"),
+        Err(err) => platform::alert(
+            platform::APP_NAME,
+            &format!("Could not open the settings.\n\n{err}"),
+        ),
+    }
+}
+
+/// Starts a background copy if the single-instance lock is free.
+fn start_background_copy() {
+    match platform::single_instance() {
+        // Nothing was holding the lock, so this process could take it: release it
+        // and let a real background copy have it instead.
+        Ok(Some(guard)) => {
+            drop(guard);
+            let exe = match std::env::current_exe() {
+                Ok(exe) => exe,
+                Err(err) => {
+                    logging::line(&format!("could not find the executable: {err}"));
+                    return;
+                }
+            };
+            use std::process::{Command, Stdio};
+            match Command::new(&exe)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(_) => logging::line("started FreeSpeak in the background"),
+                Err(err) => {
+                    logging::line(&format!("could not start FreeSpeak in the background: {err}"))
+                }
+            }
+        }
+        Ok(None) => logging::line("FreeSpeak is already running in the background"),
+        Err(err) => logging::line(&format!("could not check whether FreeSpeak is running: {err}")),
+    }
+}
+
 /// Owns the microphone for the life of the process and reacts to hotkey toggles.
 fn capture_worker(
     commands: mpsc::Receiver<Command>,
@@ -529,6 +602,20 @@ fn capture_worker(
     };
 
     for command in commands {
+        // Re-read the config file on every keypress. That is what makes a change
+        // made in the settings window - a new key, the sound switched off - apply
+        // immediately instead of at the next restart, and it costs a small file
+        // read on an event the user caused, never while idle. The microphone is
+        // the one thing that cannot change under a running process.
+        let cfg = Config::load();
+        if tones.set_settings(tone_settings(&cfg)) {
+            logging::line(if cfg.beep {
+                "the sound cues were switched on while running"
+            } else {
+                "the sound cues were switched off while running"
+            });
+        }
+
         match command {
             Command::Start => {
                 if let Err(err) = microphone.start() {
@@ -635,11 +722,15 @@ blip = pasted, a low buzz = nothing was sent. Each one can be retuned or
 silenced in the config (tone_start, tone_stop, tone_done, tone_error,
 tone_volume).
 
-There is no window at all: the quit hotkey (default ctrl+alt+shift+q) stops it,
-or end the process in Task Manager / Activity Monitor.
+There is no window at all while it runs: the quit hotkey (default
+ctrl+alt+shift+q) stops it, or end the process in Task Manager / Activity
+Monitor. The one window it does have is the settings, opened by the Start-menu
+entry, by double-clicking the app while it is already running, or with
+`--settings`.
 
 OPTIONS:
-    --set-key           ask for the API key and save it in the config
+    --settings          open the settings window (API key, sound on/off)
+    --set-key           ask for the API key in the terminal and save it
     --init              create the config file and exit
     --devices           list input devices and exit
     --hotkey <spec>     e.g. ctrl+alt+space, ctrl+shift+d

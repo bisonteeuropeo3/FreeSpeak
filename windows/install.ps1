@@ -117,9 +117,21 @@ if ($NoAutostart) {
 }
 
 $config = Join-Path $env:LOCALAPPDATA 'freespeak\config'
-if (-not (Test-Path $config)) {
+if (-not (Test-Path $config) -and -not (Test-Path (Join-Path $env:LOCALAPPDATA 'voice-not\config'))) {
     & $exe --init 2>&1 | Out-Null
 }
+
+# A Start-menu entry, because the app has no window of its own and the settings
+# are otherwise only reachable by running the exe with --settings.
+$link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\FreeSpeak.lnk'
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($link)
+$shortcut.TargetPath = $exe
+$shortcut.Arguments = '--settings'
+$shortcut.Description = 'FreeSpeak settings - API key and sound'
+$shortcut.IconLocation = $exe
+$shortcut.Save()
+Write-Host "start menu: $link" -ForegroundColor Green
 Write-Host ""
 & $exe --help 2>&1 | Select-Object -First 3 | ForEach-Object { Write-Host $_ }
 Write-Host ""
